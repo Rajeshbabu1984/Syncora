@@ -116,7 +116,8 @@
 
   /* ──────────────────── LOBBY SETUP ──────────────────── */
   roomCodeDisplay.textContent = ROOM_CODE;
-  displayNameInput.value = localStorage.getItem('syncora_name') || '';
+  const _storedUser = (() => { try { return JSON.parse(localStorage.getItem('syncora_user')); } catch { return null; } })();
+  displayNameInput.value = (_storedUser && _storedUser.name) || localStorage.getItem('syncora_name') || '';
 
   // Get local media
   try {
