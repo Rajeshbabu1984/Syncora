@@ -18,12 +18,14 @@ Endpoints:
 import json
 import logging
 import os
+import shutil
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 from starlette.websockets import WebSocketState
 
@@ -43,6 +45,8 @@ TOKEN_EXPIRE_DAYS = 30
 ADMIN_KEY         = os.getenv("ADMIN_KEY", "syncora-admin-2026")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./syncora.db")
+UPLOADS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 # ─────────────────────────────────────────────────────────────
 # Logging
@@ -66,6 +70,27 @@ class User(SQLModel, table=True):
     email:          str            = Field(index=True, unique=True)
     hashed_password: str
     created_at:     datetime       = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class Channel(SQLModel, table=True):
+    id:          Optional[int] = Field(default=None, primary_key=True)
+    name:        str           = Field(index=True)   # e.g. "🔥 general"
+    description: Optional[str] = None
+    created_by:  int           = Field(default=0)
+    created_at:  datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ChatMessage(SQLModel, table=True):
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    channel_id:    Optional[int] = Field(default=None)   # null → DM
+    dm_to_user_id: Optional[int] = Field(default=None)
+    sender_id:     int
+    sender_name:   str
+    content:       str           = Field(default="")
+    file_url:      Optional[str] = None
+    file_name:     Optional[str] = None
+    reactions:     str           = Field(default="{}")   # JSON {"👍": [uid,...]}
+    created_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 def create_db_tables():
@@ -151,11 +176,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+# Chat WebSocket connections: { user_id: WebSocket }
+chat_connections: Dict[int, WebSocket] = {}
+
 
 @app.on_event("startup")
 def on_startup():
     create_db_tables()
     log.info("Database ready at %s", DATABASE_URL)
+    # Seed default channels if none exist
+    with Session(engine) as session:
+        if not session.exec(select(Channel)).first():
+            for cname, cdesc in [
+                ("💬 general",  "Company-wide announcements and general chat"),
+                ("🎉 random",   "Non-work banter and fun"),
+                ("🛠️ dev",      "Engineering discussions"),
+                ("📢 updates",  "Product and release updates"),
+            ]:
+                session.add(Channel(name=cname, description=cdesc, created_by=0))
+            session.commit()
+            log.info("Default channels seeded")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -361,3 +403,248 @@ async def ws_endpoint(ws: WebSocket, room_code: str, peer_id: str, display_name:
         if room_code in rooms and not rooms[room_code]:
             del rooms[room_code]
             log.info("[%s] Room deleted (empty)", room_code)
+
+
+# ─────────────────────────────────────────────────────────────
+# Chat helpers
+# ─────────────────────────────────────────────────────────────
+def _msg_dict(m: ChatMessage) -> dict:
+    return {
+        "id":            m.id,
+        "channel_id":    m.channel_id,
+        "dm_to_user_id": m.dm_to_user_id,
+        "sender_id":     m.sender_id,
+        "sender_name":   m.sender_name,
+        "content":       m.content,
+        "file_url":      m.file_url,
+        "file_name":     m.file_name,
+        "reactions":     json.loads(m.reactions or "{}"),
+        "ts":            m.created_at.isoformat(),
+    }
+
+
+async def _chat_broadcast(payload: dict, exclude_uid: Optional[int] = None):
+    for uid, ws in list(chat_connections.items()):
+        if uid == exclude_uid:
+            continue
+        await safe_send(ws, payload)
+
+
+async def _chat_send(user_id: int, payload: dict):
+    ws = chat_connections.get(user_id)
+    if ws:
+        await safe_send(ws, payload)
+
+
+# ─────────────────────────────────────────────────────────────
+# Chat Pydantic schemas
+# ─────────────────────────────────────────────────────────────
+class ChannelCreate(BaseModel):
+    name:        str
+    description: Optional[str] = None
+
+
+# ─────────────────────────────────────────────────────────────
+# Chat REST endpoints
+# ─────────────────────────────────────────────────────────────
+@app.get("/chat/channels")
+def list_channels(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    channels = session.exec(select(Channel).order_by(Channel.created_at)).all()
+    return [{"id": c.id, "name": c.name, "description": c.description} for c in channels]
+
+
+@app.post("/chat/channels", status_code=201)
+def create_channel(
+    req: ChannelCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Channel name required")
+    ch = Channel(name=name, description=req.description, created_by=current_user.id)
+    session.add(ch)
+    session.commit()
+    session.refresh(ch)
+    return {"id": ch.id, "name": ch.name, "description": ch.description}
+
+
+@app.get("/chat/channels/{channel_id}/messages")
+def channel_messages(
+    channel_id: int,
+    before: Optional[int] = None,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    stmt = select(ChatMessage).where(ChatMessage.channel_id == channel_id)
+    if before:
+        stmt = stmt.where(ChatMessage.id < before)
+    stmt = stmt.order_by(ChatMessage.created_at.desc()).limit(limit)
+    msgs = list(session.exec(stmt).all())
+    msgs.reverse()
+    return [_msg_dict(m) for m in msgs]
+
+
+@app.get("/chat/users")
+def list_chat_users(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    users = session.exec(select(User).where(User.id != current_user.id)).all()
+    return [{"id": u.id, "name": u.name} for u in users]
+
+
+@app.get("/chat/dm/{other_user_id}/messages")
+def dm_messages(
+    other_user_id: int,
+    before: Optional[int] = None,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    from sqlalchemy import or_, and_
+    stmt = select(ChatMessage).where(
+        ChatMessage.channel_id == None,  # noqa: E711
+        or_(
+            and_(ChatMessage.sender_id == current_user.id, ChatMessage.dm_to_user_id == other_user_id),
+            and_(ChatMessage.sender_id == other_user_id,   ChatMessage.dm_to_user_id == current_user.id),
+        ),
+    )
+    if before:
+        stmt = stmt.where(ChatMessage.id < before)
+    stmt = stmt.order_by(ChatMessage.created_at.desc()).limit(limit)
+    msgs = list(session.exec(stmt).all())
+    msgs.reverse()
+    return [_msg_dict(m) for m in msgs]
+
+
+@app.post("/chat/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    import time as _time
+    original = file.filename or "file"
+    ext      = os.path.splitext(original)[1].lower()
+    allowed  = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".txt", ".zip", ".mp4", ".mov"}
+    safe_ext = ext if ext in allowed else ".bin"
+    fname    = f"{current_user.id}_{int(_time.time() * 1000)}{safe_ext}"
+    dest     = os.path.join(UPLOADS_DIR, fname)
+    with open(dest, "wb") as fh:
+        shutil.copyfileobj(file.file, fh)
+    return {"url": f"/uploads/{fname}", "name": original}
+
+
+# ─────────────────────────────────────────────────────────────
+# Chat WebSocket
+# ─────────────────────────────────────────────────────────────
+@app.websocket("/ws/chat/{user_id}")
+async def chat_ws(ws: WebSocket, user_id: int, token: str = Query(...)):
+    # Authenticate via token query param
+    try:
+        payload = decode_token(token)
+        if int(payload["sub"]) != user_id:
+            await ws.close(code=4001)
+            return
+    except Exception:
+        await ws.close(code=4001)
+        return
+
+    await ws.accept()
+    chat_connections[user_id] = ws
+    log.info("[chat] user %d connected  (total online: %d)", user_id, len(chat_connections))
+
+    with Session(engine) as session:
+        db_user = session.get(User, user_id)
+        uname   = db_user.name if db_user else f"User{user_id}"
+
+    await _chat_broadcast({"type": "presence", "user_id": user_id, "online": True}, exclude_uid=user_id)
+
+    try:
+        while True:
+            raw   = await ws.receive_text()
+            msg   = json.loads(raw)
+            mtype = msg.get("type")
+
+            # ── Channel message ──
+            if mtype == "channel_message":
+                channel_id = msg.get("channel_id")
+                content    = (msg.get("content") or "").strip()
+                file_url   = msg.get("file_url")
+                file_name  = msg.get("file_name")
+                if not content and not file_url:
+                    continue
+                with Session(engine) as session:
+                    cm = ChatMessage(
+                        channel_id=channel_id, sender_id=user_id, sender_name=uname,
+                        content=content, file_url=file_url, file_name=file_name,
+                    )
+                    session.add(cm); session.commit(); session.refresh(cm)
+                await _chat_broadcast({"type": "channel_message", "message": _msg_dict(cm)})
+
+            # ── Direct message ──
+            elif mtype == "dm":
+                to_uid    = msg.get("to_user_id")
+                content   = (msg.get("content") or "").strip()
+                file_url  = msg.get("file_url")
+                file_name = msg.get("file_name")
+                if not content and not file_url:
+                    continue
+                with Session(engine) as session:
+                    cm = ChatMessage(
+                        channel_id=None, dm_to_user_id=to_uid,
+                        sender_id=user_id, sender_name=uname,
+                        content=content, file_url=file_url, file_name=file_name,
+                    )
+                    session.add(cm); session.commit(); session.refresh(cm)
+                dm_payload = {"type": "dm", "message": _msg_dict(cm)}
+                await _chat_send(to_uid, dm_payload)
+                await _chat_send(user_id, dm_payload)
+
+            # ── Typing indicator ──
+            elif mtype == "typing":
+                channel_id = msg.get("channel_id")
+                to_uid     = msg.get("to_user_id")
+                tpl        = {"type": "typing", "user_id": user_id, "user_name": uname}
+                if channel_id:
+                    tpl["channel_id"] = channel_id
+                    await _chat_broadcast(tpl, exclude_uid=user_id)
+                elif to_uid:
+                    tpl["to_user_id"] = to_uid
+                    await _chat_send(to_uid, tpl)
+
+            # ── Emoji reaction ──
+            elif mtype == "react":
+                msg_id = msg.get("message_id")
+                emoji  = msg.get("emoji", "")
+                if not emoji or not msg_id:
+                    continue
+                with Session(engine) as session:
+                    cm = session.get(ChatMessage, msg_id)
+                    if not cm:
+                        continue
+                    reacts = json.loads(cm.reactions or "{}")
+                    lst    = reacts.get(emoji, [])
+                    if user_id in lst:
+                        lst.remove(user_id)
+                    else:
+                        lst.append(user_id)
+                    if lst:
+                        reacts[emoji] = lst
+                    elif emoji in reacts:
+                        del reacts[emoji]
+                    cm.reactions = json.dumps(reacts)
+                    session.add(cm); session.commit()
+                await _chat_broadcast({"type": "reaction_update", "message_id": msg_id, "reactions": reacts})
+
+    except (WebSocketDisconnect, Exception) as exc:
+        if not isinstance(exc, WebSocketDisconnect):
+            log.warning("[chat] user %d error: %s", user_id, exc)
+    finally:
+        chat_connections.pop(user_id, None)
+        log.info("[chat] user %d disconnected", user_id)
+        await _chat_broadcast({"type": "presence", "user_id": user_id, "online": False})

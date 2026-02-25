@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Syncora — Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script src="js/config.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg-app:     #1a1a2e;
+      --bg-sidebar: #16213e;
+      --bg-main:    #0f3460;
+      --bg-input:   #1a1a2e;
+      --bg-msg:     #1e2a45;
+      --bg-hover:   rgba(255,255,255,.06);
+      --bg-active:  rgba(139,92,246,.25);
+      --purple:     #8b5cf6;
+      --purple-l:   #a78bfa;
+      --text:       #e2e8f0;
+      --text-muted: #94a3b8;
+      --border:     rgba(255,255,255,.08);
+      --radius:     10px;
+      --online:     #22c55e;
+    }
+    body { font-family:'Inter',sans-serif; background:var(--bg-app); color:var(--text);
+           height:100vh; overflow:hidden; display:flex; align-items:stretch; }
+
+    /* ── Auth gate ── */
+    #authGate { position:fixed; inset:0; background:var(--bg-app);
+                display:flex; align-items:center; justify-content:center; z-index:999; }
+    #authGate.hidden { display:none; }
+    .gate-card { background:var(--bg-sidebar); border:1px solid var(--border);
+                 border-radius:16px; padding:40px; text-align:center; max-width:360px; }
+    .gate-card h2 { font-size:1.4rem; margin-bottom:8px; }
+    .gate-card p  { color:var(--text-muted); margin-bottom:24px; }
+    .gate-card a  { color:var(--purple-l); text-decoration:none; font-weight:600; }
+
+    /* ── Layout ── */
+    .workspace { display:flex; width:100%; height:100vh; }
+
+    /* ── Sidebar ── */
+    .sidebar { width:260px; min-width:260px; background:var(--bg-sidebar);
+               display:flex; flex-direction:column; border-right:1px solid var(--border); overflow:hidden; }
+
+    .ws-header { padding:16px 16px 14px; border-bottom:1px solid var(--border);
+                 display:flex; align-items:center; gap:10px; }
+    .ws-logo   { font-size:1.1rem; font-weight:700; color:var(--purple-l); display:flex; align-items:center; gap:6px; }
+
+    .sidebar-scroll { flex:1; overflow-y:auto; padding:8px 0; }
+    .sidebar-scroll::-webkit-scrollbar { width:4px; }
+    .sidebar-scroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+
+    .sidebar-section { margin-bottom:4px; }
+    .section-header  { display:flex; align-items:center; justify-content:space-between;
+                       padding:6px 12px 4px; color:var(--text-muted); font-size:.7rem;
+                       font-weight:600; text-transform:uppercase; letter-spacing:.08em; }
+    .btn-add { background:none; border:none; color:var(--text-muted); cursor:pointer;
+               font-size:.95rem; padding:2px 4px; border-radius:4px; transition:color .2s; }
+    .btn-add:hover { color:var(--text); }
+
+    .channel-list, .dm-list { list-style:none; }
+    .ch-item { display:flex; align-items:center; gap:8px; padding:6px 14px; cursor:pointer;
+               border-radius:6px; margin:0 6px; font-size:.875rem; color:var(--text-muted);
+               transition:background .15s, color .15s; position:relative; }
+    .ch-item:hover { background:var(--bg-hover); color:var(--text); }
+    .ch-item.active { background:var(--bg-active); color:var(--text); }
+    .ch-prefix { font-size:.8rem; opacity:.7; }
+    .ch-name   { flex:1 truncate; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .ch-badge  { background:var(--purple); color:#fff; font-size:.65rem; font-weight:700;
+                 border-radius:10px; padding:1px 6px; min-width:18px; text-align:center; }
+
+    .dm-avatar { width:24px; height:24px; border-radius:50%; background:var(--purple);
+                 display:flex; align-items:center; justify-content:center; font-size:.65rem;
+                 font-weight:700; flex-shrink:0; position:relative; }
+    .dm-dot    { position:absolute; bottom:-1px; right:-1px; width:8px; height:8px;
+                 border-radius:50%; background:#64748b; border:2px solid var(--bg-sidebar); }
+    .dm-dot.online { background:var(--online); }
+
+    .sidebar-user { padding:12px 14px; border-top:1px solid var(--border);
+                    display:flex; align-items:center; gap:10px; }
+    .user-avatar  { width:32px; height:32px; border-radius:50%; background:var(--purple);
+                    display:flex; align-items:center; justify-content:center; font-weight:700;
+                    font-size:.8rem; flex-shrink:0; }
+    .user-info    { flex:1; min-width:0; }
+    .user-name    { font-size:.85rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .user-status  { font-size:.7rem; color:var(--online); }
+
+    /* ── Main chat area ── */
+    .chat-main { flex:1; display:flex; flex-direction:column; min-width:0; background:var(--bg-main); }
+
+    .chat-header { padding:14px 20px; border-bottom:1px solid var(--border);
+                   display:flex; align-items:center; gap:12px; background:rgba(0,0,0,.2); flex-shrink:0; }
+    .chat-title  { font-weight:600; font-size:1rem; }
+    .chat-desc   { font-size:.78rem; color:var(--text-muted); margin-left:auto; }
+
+    .messages-wrap { flex:1; overflow-y:auto; padding:20px 24px 8px; }
+    .messages-wrap::-webkit-scrollbar { width:6px; }
+    .messages-wrap::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+
+    .msg-group  { margin-bottom:18px; }
+    .msg-header { display:flex; align-items:baseline; gap:8px; margin-bottom:2px; }
+    .msg-name   { font-weight:600; font-size:.875rem; }
+    .msg-time   { font-size:.72rem; color:var(--text-muted); }
+    .msg-bubble { font-size:.875rem; line-height:1.55; color:var(--text); word-break:break-word;
+                  position:relative; padding:2px 0; }
+    .msg-bubble:hover .react-btn { opacity:1; }
+    .react-btn  { opacity:0; position:absolute; right:0; top:-2px; background:var(--bg-sidebar);
+                  border:1px solid var(--border); border-radius:6px; padding:3px 7px;
+                  cursor:pointer; font-size:.8rem; transition:opacity .15s; }
+
+    .reactions-row { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+    .reaction-pill { display:flex; align-items:center; gap:4px; background:var(--bg-sidebar);
+                     border:1px solid var(--border); border-radius:12px; padding:2px 8px;
+                     cursor:pointer; font-size:.8rem; transition:background .15s; }
+    .reaction-pill:hover { background:var(--bg-active); border-color:var(--purple); }
+    .reaction-pill.mine  { background:var(--bg-active); border-color:var(--purple); }
+    .reaction-count { font-size:.75rem; color:var(--text-muted); }
+
+    .msg-file   { display:inline-flex; align-items:center; gap:8px; margin-top:6px;
+                  background:var(--bg-sidebar); border:1px solid var(--border); border-radius:8px;
+                  padding:8px 12px; font-size:.82rem; color:var(--text); text-decoration:none;
+                  max-width:320px; }
+    .msg-file i { color:var(--purple-l); }
+    .msg-img    { max-width:320px; max-height:260px; border-radius:8px;
+                  margin-top:8px; display:block; cursor:pointer; object-fit:cover; }
+
+    .day-divider { display:flex; align-items:center; gap:12px; margin:20px 0 16px;
+                   color:var(--text-muted); font-size:.72rem; }
+    .day-line    { flex:1; height:1px; background:var(--border); }
+
+    .typing-bar { padding:4px 24px 2px; font-size:.78rem; color:var(--text-muted);
+                  min-height:22px; font-style:italic; flex-shrink:0; }
+
+    /* ── Input area ── */
+    .input-area { padding:12px 20px 16px; flex-shrink:0; }
+    .input-box  { display:flex; align-items:flex-end; gap:8px; background:var(--bg-input);
+                  border:1px solid var(--border); border-radius:12px; padding:8px 12px;
+                  transition:border-color .2s; }
+    .input-box:focus-within { border-color:var(--purple); }
+    .input-actions { display:flex; gap:4px; align-items:center; }
+    .ia-btn   { background:none; border:none; color:var(--text-muted); cursor:pointer;
+                font-size:1rem; padding:4px 6px; border-radius:6px; transition:color .2s; }
+    .ia-btn:hover { color:var(--text); }
+    #msgInput { flex:1; background:none; border:none; outline:none; color:var(--text);
+                font-family:inherit; font-size:.9rem; line-height:1.5; resize:none;
+                min-height:22px; max-height:140px; padding:2px 0; }
+    #msgInput::placeholder { color:var(--text-muted); }
+    .send-btn { background:var(--purple); border:none; color:#fff; border-radius:8px;
+                padding:6px 14px; cursor:pointer; font-size:.85rem; font-weight:600;
+                transition:background .2s; white-space:nowrap; }
+    .send-btn:hover { background:var(--purple-l); }
+    .send-btn:disabled { opacity:.4; cursor:default; }
+
+    /* ── Modals ── */
+    .overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:500;
+               display:flex; align-items:center; justify-content:center; }
+    .overlay.hidden { display:none; }
+    .modal-card { background:var(--bg-sidebar); border:1px solid var(--border);
+                  border-radius:16px; padding:28px; width:420px; max-width:95vw; }
+    .modal-card h3    { font-size:1.1rem; margin-bottom:20px; }
+    .modal-card label { font-size:.8rem; color:var(--text-muted); display:block; margin-bottom:6px; }
+    .modal-input { width:100%; background:var(--bg-app); border:1px solid var(--border);
+                   border-radius:8px; padding:10px 14px; color:var(--text); font-family:inherit;
+                   font-size:.9rem; outline:none; transition:border-color .2s; }
+    .modal-input:focus { border-color:var(--purple); }
+    .modal-row  { display:flex; gap:10px; margin-top:8px; }
+    .modal-btn  { flex:1; padding:10px; border:none; border-radius:8px; font-family:inherit;
+                  font-size:.875rem; font-weight:600; cursor:pointer; transition:background .2s; }
+    .modal-btn.primary   { background:var(--purple); color:#fff; }
+    .modal-btn.primary:hover { background:var(--purple-l); }
+    .modal-btn.secondary { background:var(--bg-main); color:var(--text-muted); }
+    .modal-btn.secondary:hover { background:var(--bg-hover); }
+
+    /* channel emoji quick-pick */
+    .emoji-quick { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px; }
+    .eq-btn { background:var(--bg-main); border:none; border-radius:6px; padding:5px 7px;
+              font-size:1rem; cursor:pointer; transition:background .15s; }
+    .eq-btn:hover { background:var(--bg-active); }
+
+    .user-pick-list { max-height:240px; overflow-y:auto; margin-bottom:10px; }
+    .user-pick-item { display:flex; align-items:center; gap:10px; padding:8px 10px;
+                      border-radius:8px; cursor:pointer; transition:background .15s; }
+    .user-pick-item:hover { background:var(--bg-hover); }
+    .user-pick-item .dm-avatar { width:32px; height:32px; font-size:.8rem; }
+
+    /* ── Emoji picker for input ── */
+    .emoji-picker { position:fixed; bottom:90px; left:280px; z-index:400;
+                    background:var(--bg-sidebar); border:1px solid var(--border);
+                    border-radius:12px; padding:12px; width:300px; }
+    .emoji-picker.hidden { display:none; }
+    .ep-grid { display:grid; grid-template-columns:repeat(8,1fr); gap:2px; }
+    .ep-btn  { background:none; border:none; font-size:1.2rem; cursor:pointer; padding:4px;
+               border-radius:6px; transition:background .15s; text-align:center; }
+    .ep-btn:hover { background:var(--bg-active); }
+
+    /* ── Toast ── */
+    #toast { position:fixed; bottom:24px; right:24px; background:var(--bg-sidebar);
+             border:1px solid var(--border); border-radius:10px; padding:10px 18px;
+             font-size:.85rem; opacity:0; transform:translateY(8px);
+             transition:opacity .3s, transform .3s; z-index:600; pointer-events:none; }
+    #toast.show { opacity:1; transform:translateY(0); }
+  </style>
+</head>
+<body>
+
+<!-- Auth gate -->
+<div id="authGate">
+  <div class="gate-card">
+    <h2>Sign in to Chat</h2>
+    <p>You need a Syncora account to access the team chat.</p>
+    <a href="index.html">Go to Sign In / Sign Up →</a>
+  </div>
+</div>
+
+<!-- Main workspace -->
+<div class="workspace" id="workspace">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="ws-header">
+      <div class="ws-logo"><i class="fa-solid fa-bolt"></i> Syncora</div>
+    </div>
+
+    <div class="sidebar-scroll">
+      <!-- Channels -->
+      <div class="sidebar-section">
+        <div class="section-header">
+          <span>Channels</span>
+          <button class="btn-add" id="addChannelBtn" title="New channel">+</button>
+        </div>
+        <ul class="channel-list" id="channelList"></ul>
+      </div>
+
+      <!-- DMs -->
+      <div class="sidebar-section" style="margin-top:12px;">
+        <div class="section-header">
+          <span>Direct Messages</span>
+          <button class="btn-add" id="addDmBtn" title="New DM">+</button>
+        </div>
+        <ul class="dm-list" id="dmList"></ul>
+      </div>
+    </div>
+
+    <!-- Current user -->
+    <div class="sidebar-user">
+      <div class="user-avatar" id="userAvatar">?</div>
+      <div class="user-info">
+        <div class="user-name" id="userNameLabel">—</div>
+        <div class="user-status">● Active</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Chat main -->
+  <main class="chat-main">
+    <div class="chat-header">
+      <span id="chatTitle" class="chat-title"># general</span>
+      <span id="chatDesc" class="chat-desc"></span>
+    </div>
+    <div class="messages-wrap" id="messagesWrap"></div>
+    <div class="typing-bar" id="typingBar"></div>
+    <div class="input-area">
+      <div class="input-box">
+        <div class="input-actions">
+          <button class="ia-btn" id="emojiInputBtn" title="Emoji">😊</button>
+          <label class="ia-btn" for="fileInput" title="Attach file" style="cursor:pointer; display:flex; align-items:center;">
+            <i class="fa-solid fa-paperclip"></i>
+          </label>
+          <input type="file" id="fileInput" hidden />
+        </div>
+        <textarea id="msgInput" rows="1" placeholder="Message # general"></textarea>
+        <button class="send-btn" id="sendBtn">Send</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Emoji picker for input -->
+<div class="emoji-picker hidden" id="emojiPicker"></div>
+
+<!-- Add channel modal -->
+<div class="overlay hidden" id="addChannelOverlay">
+  <div class="modal-card">
+    <h3>Create a channel</h3>
+    <label>Pick an emoji</label>
+    <div class="emoji-quick" id="channelEmojiPicker"></div>
+    <label>Channel name</label>
+    <input class="modal-input" id="channelNameInput" placeholder="e.g. design" maxlength="40" />
+    <label style="margin-top:12px;">Description (optional)</label>
+    <input class="modal-input" id="channelDescInput" placeholder="What's this channel about?" maxlength="120" />
+    <div class="modal-row" style="margin-top:20px;">
+      <button class="modal-btn secondary" id="cancelChannelBtn">Cancel</button>
+      <button class="modal-btn primary" id="createChannelBtn">Create Channel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add DM modal -->
+<div class="overlay hidden" id="addDmOverlay">
+  <div class="modal-card">
+    <h3>Start a Direct Message</h3>
+    <div class="user-pick-list" id="userPickList">
+      <div style="color:var(--text-muted); font-size:.85rem; padding:8px 0;">Loading members…</div>
+    </div>
+    <div class="modal-row">
+      <button class="modal-btn secondary" id="cancelDmBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="js/chatapp.js"></script>
+</body>
+</html>
