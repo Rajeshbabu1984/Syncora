@@ -3,6 +3,17 @@
  */
 'use strict';
 
+// ── Migrate old localStorage keys (syncora_ → syncdrax_) ────────────────────
+(function migrateLegacyKeys() {
+  const pairs = [['syncora_user', 'syncdrax_user'], ['syncora_token', 'syncdrax_token']];
+  pairs.forEach(([oldKey, newKey]) => {
+    if (!localStorage.getItem(newKey) && localStorage.getItem(oldKey)) {
+      localStorage.setItem(newKey, localStorage.getItem(oldKey));
+      localStorage.removeItem(oldKey);
+    }
+  });
+})();
+
 const API = typeof API_BASE !== 'undefined' ? API_BASE : 'http://localhost:8000';
 const WSS = typeof WS_BASE  !== 'undefined' ? WS_BASE  : 'ws://localhost:8000';
 
