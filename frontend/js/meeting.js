@@ -67,6 +67,34 @@
   const confirmLeave    = document.getElementById('confirmLeave');
   const toggleLayout    = document.getElementById('toggleLayout');
 
+  // New feature DOM refs
+  const raiseHandBtn      = document.getElementById('raiseHandBtn');
+  const reactionsBtn      = document.getElementById('reactionsBtn');
+  const reactionsPanel    = document.getElementById('reactionsPanel');
+  const noiseSuppBtn      = document.getElementById('noiseSuppBtn');
+  const recordBtn         = document.getElementById('recordBtn');
+  const whiteboardBtn     = document.getElementById('whiteboardBtn');
+  const localHandBadge    = document.getElementById('localHandBadge');
+  const summaryOverlay    = document.getElementById('summaryOverlay');
+  const sumStayBtn        = document.getElementById('sumStayBtn');
+  const sumLeaveBtn       = document.getElementById('sumLeaveBtn');
+  const sumDuration       = document.getElementById('sumDuration');
+  const sumParticipants   = document.getElementById('sumParticipants');
+  const sumMessages       = document.getElementById('sumMessages');
+  const sumNames          = document.getElementById('sumNames');
+  const recordIndicator   = document.getElementById('recordIndicator');
+  const recTimerEl        = document.getElementById('recTimer');
+  const wbOverlay         = document.getElementById('whiteboardOverlay');
+  const wbCanvas          = document.getElementById('whiteboardCanvas');
+  const wbCloseBtn        = document.getElementById('wbCloseBtn');
+  const wbPenBtn          = document.getElementById('wbPenBtn');
+  const wbEraserBtn       = document.getElementById('wbEraserBtn');
+  const wbColorPick       = document.getElementById('wbColor');
+  const wbSizeRange       = document.getElementById('wbSize');
+  const wbClearBtn        = document.getElementById('wbClearBtn');
+  const editProfilePicBtn = document.getElementById('editProfilePicBtn');
+  const profilePicInput   = document.getElementById('profilePicInput');
+
   /* -------------------- STATE -------------------- */
   let localStream   = null;
   let micEnabled    = true;
@@ -79,6 +107,25 @@
   let startTime     = null;
   let timerInterval = null;
   let layoutMode    = 'grid'; // 'grid' | 'spotlight'
+
+  // New feature state
+  let handRaised          = false;
+  let noiseActive         = false;
+  let _noiseAudioCtx      = null;
+  let _noiseDest          = null;
+  let _originalAudioTrack = null;
+  let isRecording         = false;
+  let _mediaRecorder      = null;
+  let _recordedChunks     = [];
+  let _recSeconds         = 0;
+  let _recInterval        = null;
+  let allParticipantNames = new Set();
+  let meetingChatCount    = 0;
+  let wbTool              = 'pen';
+  let _wbDrawing          = false;
+  let _wbLastX            = 0;
+  let _wbLastY            = 0;
+  let _wbCtx              = null;
 
   // Auth — chat is only available to signed-in users
   const IS_SIGNED_IN = !!localStorage.getItem('syncdrax_user');
@@ -139,6 +186,42 @@
     }
   }
   updateLobbyPreview();
+
+  // Apply saved profile picture to lobby avatar
+  (function applyProfilePic() {
+    const savedPic = localStorage.getItem('syncdrax_avatar');
+    if (!savedPic) return;
+    [lobbyAvatar, localAvatar].forEach(el => {
+      if (!el) return;
+      el.style.backgroundImage = `url('${savedPic}')`;
+      el.style.backgroundSize  = 'cover';
+      el.style.backgroundPosition = 'center';
+      el.style.fontSize = '0';
+      el.classList.add('has-pic');
+    });
+  })();
+
+  // Profile pic upload handler
+  editProfilePicBtn.addEventListener('click', () => profilePicInput.click());
+  profilePicInput.addEventListener('change', () => {
+    const file = profilePicInput.files[0];
+    if (!file) return;
+    profilePicInput.value = '';
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      localStorage.setItem('syncdrax_avatar', dataUrl);
+      [lobbyAvatar, localAvatar].forEach(el => {
+        el.style.backgroundImage = `url('${dataUrl}')`;
+        el.style.backgroundSize  = 'cover';
+        el.style.backgroundPosition = 'center';
+        el.style.fontSize = '0';
+        el.classList.add('has-pic');
+      });
+      showToast('Profile photo updated!');
+    };
+    reader.readAsDataURL(file);
+  });
 
   function updateLobbyPreview() {
     if (localStream && localStream.getVideoTracks().length && camEnabled) {
@@ -242,6 +325,7 @@
       emojiPicker: emojiPicker,
       badgeEl:     chatBadge,
       onSend: (text) => {
+        meetingChatCount++;
         if (rtc) rtc.sendChatMessage(text);
         else chat.addMessage({ from: displayName, text, ts: Date.now(), self: true });
       }
@@ -293,6 +377,25 @@
 
       onParticipantsUpdate(peers) {
         updateParticipantCount(peers.length + 1); // +1 for self
+      },
+
+      onData(msg) {
+        if (msg.type === 'raise_hand') {
+          const tile = peerTileMap.get(msg.from_id);
+          if (tile) {
+            let badge = tile.querySelector('.raised-hand-badge');
+            if (!badge) {
+              badge = document.createElement('div');
+              badge.className = 'raised-hand-badge';
+              badge.textContent = '✋';
+              tile.appendChild(badge);
+            }
+            if (msg.raised) badge.classList.remove('hidden');
+            else badge.classList.add('hidden');
+          }
+        }
+        if (msg.type === 'reaction') fireReaction(msg.emoji);
+        if (msg.type === 'whiteboard') handleWbOp(msg);
       }
     });
 
@@ -363,6 +466,7 @@
 
   /* -------------------- SIDEBAR PARTICIPANTS -------------------- */
   function addPeerToSidebar(peerId, name) {
+    allParticipantNames.add(name);
     const li = document.createElement('li');
     li.className = 'participant-item';
     li.id = `sidebar-peer-${peerId}`;
@@ -386,6 +490,7 @@
 
   // Add self to sidebar (called from enterMeeting after displayName is set)
   function addSelfToSidebar() {
+    allParticipantNames.add(displayName);
     const li = document.createElement('li');
     li.className = 'participant-item';
     const dot = document.createElement('span');
@@ -571,8 +676,34 @@
   leaveBtn.addEventListener('click', () => leaveModal.classList.remove('hidden'));
   cancelLeave.addEventListener('click', () => leaveModal.classList.add('hidden'));
   confirmLeave.addEventListener('click', () => {
+    leaveModal.classList.add('hidden');
+    showMeetingSummary();
+  });
+
+  function showMeetingSummary() {
+    const totalSec = Math.floor((Date.now() - (startTime || Date.now())) / 1000);
+    const mm = Math.floor(totalSec / 60).toString().padStart(2, '0');
+    const ss = (totalSec % 60).toString().padStart(2, '0');
+    if (sumDuration)      sumDuration.textContent     = `${mm}:${ss}`;
+    if (sumParticipants)  sumParticipants.textContent  = allParticipantNames.size || 1;
+    if (sumMessages)      sumMessages.textContent      = meetingChatCount;
+    if (sumNames)         sumNames.textContent         = [...allParticipantNames].join(', ') || displayName;
+    summaryOverlay.classList.remove('hidden');
     clearInterval(timerInterval);
     rtc && rtc.disconnect();
+  }
+
+  sumStayBtn.addEventListener('click', () => {
+    summaryOverlay.classList.add('hidden');
+    // Re-start the timer so it's not frozen
+    timerInterval = setInterval(() => {
+      const s = Math.floor((Date.now() - startTime) / 1000);
+      const m = Math.floor(s / 60).toString().padStart(2, '0');
+      const ss = (s % 60).toString().padStart(2, '0');
+      meetingTimerEl.textContent = `${m}:${ss}`;
+    }, 1000);
+  });
+  sumLeaveBtn.addEventListener('click', () => {
     window.location.href = 'index.html';
   });
 
@@ -618,7 +749,223 @@
     if (e.key === 'Escape') {
       leaveModal.classList.add('hidden');
       bgPanel.classList.add('hidden');
+      reactionsPanel.classList.add('hidden');
+      if (wbOverlay && !wbOverlay.classList.contains('hidden')) wbOverlay.classList.add('hidden');
     }
+  });
+
+  /* ==================== RAISE HAND ==================== */
+  raiseHandBtn.addEventListener('click', () => {
+    handRaised = !handRaised;
+    raiseHandBtn.classList.toggle('active', handRaised);
+    raiseHandBtn.querySelector('span').textContent = handRaised ? 'Lower' : 'Hand';
+    localHandBadge.classList.toggle('hidden', !handRaised);
+    if (rtc) rtc.sendData('raise_hand', { raised: handRaised });
+  });
+
+  /* ==================== REACTIONS ==================== */
+  reactionsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    reactionsPanel.classList.toggle('hidden');
+  });
+  document.addEventListener('click', (e) => {
+    if (!reactionsPanel.contains(e.target) && e.target !== reactionsBtn) {
+      reactionsPanel.classList.add('hidden');
+    }
+  });
+  document.querySelectorAll('.react-emoji-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const emoji = btn.dataset.emoji;
+      reactionsPanel.classList.add('hidden');
+      fireReaction(emoji);
+      if (rtc) rtc.sendData('reaction', { emoji });
+    });
+  });
+
+  function fireReaction(emoji) {
+    const el = document.createElement('div');
+    el.className = 'reaction-float';
+    el.textContent = emoji;
+    const grid = videoGrid.getBoundingClientRect();
+    el.style.left = (grid.left + Math.random() * grid.width * 0.8 + grid.width * 0.1) + 'px';
+    el.style.bottom = (window.innerHeight - grid.bottom + 20) + 'px';
+    document.body.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+  }
+
+  /* ==================== NOISE SUPPRESSION ==================== */
+  noiseSuppBtn.addEventListener('click', async () => {
+    noiseActive = !noiseActive;
+    noiseSuppBtn.classList.toggle('active', noiseActive);
+    noiseSuppBtn.querySelector('span').textContent = noiseActive ? 'Noise: On' : 'Noise';
+    if (!localStream) return;
+
+    if (noiseActive) {
+      try {
+        _originalAudioTrack = localStream.getAudioTracks()[0];
+        _noiseAudioCtx = new AudioContext();
+        const src = _noiseAudioCtx.createMediaStreamSource(localStream);
+        const hpf = _noiseAudioCtx.createBiquadFilter();
+        hpf.type = 'highpass'; hpf.frequency.value = 80;
+        const comp = _noiseAudioCtx.createDynamicsCompressor();
+        comp.threshold.value = -45; comp.knee.value = 30;
+        comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.25;
+        _noiseDest = _noiseAudioCtx.createMediaStreamDestination();
+        src.connect(hpf); hpf.connect(comp); comp.connect(_noiseDest);
+        const newTrack = _noiseDest.stream.getAudioTracks()[0];
+        if (rtc) rtc.replaceAudioTrack(newTrack);
+        showToast('Noise suppression ON');
+      } catch (err) {
+        console.warn('[Noise]', err);
+        showToast('Noise suppression unavailable');
+        noiseActive = false;
+        noiseSuppBtn.classList.remove('active');
+        noiseSuppBtn.querySelector('span').textContent = 'Noise';
+      }
+    } else {
+      if (_noiseAudioCtx) { _noiseAudioCtx.close(); _noiseAudioCtx = null; }
+      if (_originalAudioTrack && rtc) rtc.replaceAudioTrack(_originalAudioTrack);
+      showToast('Noise suppression OFF');
+    }
+  });
+
+  /* ==================== RECORDING ==================== */
+  recordBtn.addEventListener('click', () => {
+    if (!isRecording) startRecording(); else stopRecording();
+  });
+
+  function startRecording() {
+    try {
+      const tracks = [];
+      // Prefer canvas track if bg active, else video track
+      const videoTrack = (localCanvas && localCanvas.captureStream)
+        ? localCanvas.captureStream(30).getVideoTracks()[0]
+        : (localStream && localStream.getVideoTracks()[0]);
+      if (videoTrack) tracks.push(videoTrack);
+      const audioTrack = localStream && localStream.getAudioTracks()[0];
+      if (audioTrack) tracks.push(audioTrack);
+      if (!tracks.length) { showToast('No media to record'); return; }
+
+      const recStream = new MediaStream(tracks);
+      _recordedChunks = [];
+      _mediaRecorder = new MediaRecorder(recStream, { mimeType: 'video/webm;codecs=vp9' });
+      _mediaRecorder.ondataavailable = (e) => { if (e.data.size) _recordedChunks.push(e.data); };
+      _mediaRecorder.onstop = () => {
+        const blob = new Blob(_recordedChunks, { type: 'video/webm' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `SyncDrax-recording-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Recording saved!');
+      };
+      _mediaRecorder.start(100);
+      isRecording = true;
+      recordBtn.classList.add('recording');
+      recordBtn.querySelector('span').textContent = 'Stop Rec';
+      recordIndicator.classList.remove('hidden');
+      _recSeconds = 0;
+      _recInterval = setInterval(() => {
+        _recSeconds++;
+        const m = Math.floor(_recSeconds / 60).toString().padStart(2, '0');
+        const s = (_recSeconds % 60).toString().padStart(2, '0');
+        if (recTimerEl) recTimerEl.textContent = `${m}:${s}`;
+      }, 1000);
+    } catch (err) {
+      console.warn('[Rec]', err);
+      showToast('Recording not supported in this browser');
+    }
+  }
+
+  function stopRecording() {
+    if (_mediaRecorder && _mediaRecorder.state !== 'inactive') _mediaRecorder.stop();
+    isRecording = false;
+    recordBtn.classList.remove('recording');
+    recordBtn.querySelector('span').textContent = 'Record';
+    recordIndicator.classList.add('hidden');
+    clearInterval(_recInterval);
+  }
+
+  /* ==================== WHITEBOARD ==================== */
+  whiteboardBtn.addEventListener('click', () => {
+    wbOverlay.classList.remove('hidden');
+    initWhiteboard();
+  });
+  wbCloseBtn.addEventListener('click', () => {
+    wbOverlay.classList.add('hidden');
+  });
+
+  function initWhiteboard() {
+    if (_wbCtx) return; // already init
+    _wbCtx = wbCanvas.getContext('2d');
+    resizeWb();
+    window.addEventListener('resize', resizeWb);
+    wbCanvas.addEventListener('mousedown',  wbPointerDown);
+    wbCanvas.addEventListener('mousemove',  wbPointerMove);
+    wbCanvas.addEventListener('mouseup',    wbPointerUp);
+    wbCanvas.addEventListener('mouseleave', wbPointerUp);
+    wbCanvas.addEventListener('touchstart', wbTouchDown, { passive: false });
+    wbCanvas.addEventListener('touchmove',  wbTouchMove, { passive: false });
+    wbCanvas.addEventListener('touchend',   wbPointerUp);
+  }
+
+  function resizeWb() {
+    const rect = wbCanvas.parentElement.getBoundingClientRect();
+    const imgData = _wbCtx ? _wbCtx.getImageData(0, 0, wbCanvas.width, wbCanvas.height) : null;
+    wbCanvas.width  = rect.width;
+    wbCanvas.height = rect.height - 52;
+    _wbCtx.fillStyle = '#1a1a1e';
+    _wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height);
+    if (imgData) _wbCtx.putImageData(imgData, 0, 0);
+  }
+
+  function wbPointerDown(e) { _wbDrawing = true; _wbLastX = e.offsetX; _wbLastY = e.offsetY; }
+  function wbPointerMove(e) {
+    if (!_wbDrawing) return;
+    wbDrawLine(_wbLastX, _wbLastY, e.offsetX, e.offsetY, wbColorPick.value, parseInt(wbSizeRange.value), wbTool);
+    if (rtc) rtc.sendData('whiteboard', { op: 'draw', x0: _wbLastX, y0: _wbLastY, x1: e.offsetX, y1: e.offsetY, color: wbColorPick.value, size: parseInt(wbSizeRange.value), tool: wbTool });
+    _wbLastX = e.offsetX; _wbLastY = e.offsetY;
+  }
+  function wbPointerUp() { _wbDrawing = false; }
+  function wbTouchDown(e) { e.preventDefault(); const t = e.touches[0]; const r = wbCanvas.getBoundingClientRect(); wbPointerDown({ offsetX: t.clientX - r.left, offsetY: t.clientY - r.top }); }
+  function wbTouchMove(e) { e.preventDefault(); const t = e.touches[0]; const r = wbCanvas.getBoundingClientRect(); wbPointerMove({ offsetX: t.clientX - r.left, offsetY: t.clientY - r.top }); }
+
+  function wbDrawLine(x0, y0, x1, y1, color, size, tool) {
+    if (!_wbCtx) return;
+    _wbCtx.beginPath();
+    _wbCtx.moveTo(x0, y0);
+    _wbCtx.lineTo(x1, y1);
+    _wbCtx.strokeStyle = tool === 'eraser' ? '#1a1a1e' : (color || '#ffffff');
+    _wbCtx.lineWidth   = tool === 'eraser' ? size * 4 : size;
+    _wbCtx.lineCap     = 'round';
+    _wbCtx.lineJoin    = 'round';
+    _wbCtx.stroke();
+  }
+
+  function handleWbOp(msg) {
+    if (!_wbCtx) return;
+    if (msg.op === 'draw') wbDrawLine(msg.x0, msg.y0, msg.x1, msg.y1, msg.color, msg.size, msg.tool);
+    if (msg.op === 'clear') { _wbCtx.fillStyle = '#1a1a1e'; _wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height); }
+  }
+
+  wbPenBtn.addEventListener('click', () => {
+    wbTool = 'pen';
+    wbPenBtn.classList.add('active');
+    wbEraserBtn.classList.remove('active');
+    wbCanvas.style.cursor = 'crosshair';
+  });
+  wbEraserBtn.addEventListener('click', () => {
+    wbTool = 'eraser';
+    wbEraserBtn.classList.add('active');
+    wbPenBtn.classList.remove('active');
+    wbCanvas.style.cursor = 'cell';
+  });
+  wbClearBtn.addEventListener('click', () => {
+    if (!_wbCtx) return;
+    _wbCtx.fillStyle = '#1a1a1e';
+    _wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height);
+    if (rtc) rtc.sendData('whiteboard', { op: 'clear' });
   });
 
 })();

@@ -150,6 +150,10 @@ async function initChat() {
     msgInput.style.height = 'auto';
     msgInput.style.height = Math.min(msgInput.scrollHeight, 140) + 'px';
   });
+
+  // New features
+  initPushNotifications();
+  initPollHandlers();
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -193,6 +197,10 @@ function handleServerMsg(msg) {
       } else if (m.sender_id !== user.id) {
         unread[`dm_${other}`] = (unread[`dm_${other}`] || 0) + 1;
         updateDmBadge(other);
+      }
+      // Push notification for incoming DMs
+      if (m.sender_id !== user.id) {
+        maybePushNotif(m.sender_name, m.content || '📎 File');
       }
       break;
     }
@@ -285,6 +293,41 @@ function handleServerMsg(msg) {
       }
       break;
     }
+
+    case 'dm_read': {
+      // Mark last self-sent bubble with a "Seen" indicator
+      if (activeType === 'dm') {
+        const allBubbles = messagesWrap.querySelectorAll('[data-sender-self="1"]');
+        if (allBubbles.length) {
+          const last = allBubbles[allBubbles.length - 1];
+          if (!last.querySelector('.seen-receipt')) {
+            const rc = document.createElement('div');
+            rc.className = 'seen-receipt';
+            rc.style.cssText = 'font-size:.68rem;color:var(--text-muted);text-align:right;margin-top:2px;';
+            rc.textContent = '✓✓ Seen';
+            last.appendChild(rc);
+          }
+        }
+      }
+      break;
+    }
+
+    case 'poll_created': {
+      const p = msg.poll;
+      const isMyChannel = activeType === 'channel' && activeId === p.channel_id;
+      const isMyDm      = activeType === 'dm' && (activeId === p.creator_id || activeId === p.dm_to_user_id);
+      if (isMyChannel || isMyDm) {
+        appendPollCard(p);
+        scrollToBottom();
+      }
+      break;
+    }
+
+    case 'poll_update': {
+      const card = document.querySelector(`[data-poll-id="${msg.poll.id}"]`);
+      if (card) updatePollCard(card, msg.poll);
+      break;
+    }
   }
 }
 
@@ -365,6 +408,8 @@ async function openDm(uid, name) {
   messagesWrap.innerHTML = '<div style="color:var(--text-muted);font-size:.8rem;padding:20px 0;">Loading…</div>';
   renderDmList();
   await loadMessages('dm', uid);
+  // Notify sender that messages were read
+  wsSend({ type: 'mark_dm_read', to_user_id: uid });
 }
 
 function updateDmDot(uid, online) {
@@ -445,6 +490,7 @@ function appendMessage(m, initial) {
   const canPin = activeType === 'dm' || !activeChannel || activeChannel.created_by === 0 || activeChannel.created_by === user.id;
 
   const isSender = m.sender_id === user.id;
+  if (isSender) bubble.dataset.senderSelf = '1';
 
   inner += `<span class="msg-actions">
     <button class="react-btn" onclick="openReactionPicker(event,${m.id})" title="React">😊</button>
@@ -912,6 +958,113 @@ async function deleteScheduled(id) {
   await authFetch(`/chat/scheduled/${id}`, 'DELETE');
   await loadScheduled();
 }
+
+// ── Push Notifications ───────────────────────────────────────────────────────
+function initPushNotifications() {
+  if (!('Notification' in window)) return;
+  const notifBtn = document.getElementById('notifBtn');
+  if (!notifBtn) return;
+  const updateBtn = () => {
+    notifBtn.title = Notification.permission === 'granted' ? 'Notifications ON' : 'Enable notifications';
+    notifBtn.style.color = Notification.permission === 'granted' ? 'var(--purple-l)' : '';
+  };
+  updateBtn();
+  notifBtn.addEventListener('click', async () => {
+    if (Notification.permission === 'granted') { showToast('Notifications already on \u2705'); return; }
+    const res = await Notification.requestPermission();
+    updateBtn();
+    showToast(res === 'granted' ? 'Notifications enabled! \ud83d\udd14' : 'Permission denied');
+  });
+}
+
+function maybePushNotif(senderName, body) {
+  if (Notification.permission !== 'granted') return;
+  if (document.visibilityState === 'visible') return;
+  try {
+    new Notification(`SyncDrax — ${senderName}`, {
+      body: body.slice(0, 120),
+      icon: 'data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><text y=\'.9em\' font-size=\'90\'>\u26a1</text></svg>'
+    });
+  } catch (e) { /* ignore */ }
+}
+
+// ── Polls ────────────────────────────────────────────────────────────────────
+function initPollHandlers() {
+  const pollOverlay  = document.getElementById('pollOverlay');
+  const cancelBtn    = document.getElementById('cancelPollBtn');
+  const submitBtn    = document.getElementById('submitPollBtn');
+  const createPollBtn = document.getElementById('createPollBtn');
+  if (!pollOverlay) return;
+  createPollBtn.addEventListener('click', () => {
+    if (!activeId) { showToast('Open a channel or DM first'); return; }
+    pollOverlay.classList.remove('hidden');
+    document.getElementById('pollQuestion').value = '';
+    ['pollOpt0','pollOpt1','pollOpt2','pollOpt3'].forEach(id => { document.getElementById(id).value = ''; });
+  });
+  cancelBtn.addEventListener('click', () => pollOverlay.classList.add('hidden'));
+  submitBtn.addEventListener('click', createPoll);
+}
+
+async function createPoll() {
+  const question = document.getElementById('pollQuestion').value.trim();
+  const opts     = ['pollOpt0','pollOpt1','pollOpt2','pollOpt3']
+    .map(id => document.getElementById(id).value.trim())
+    .filter(Boolean);
+  if (!question) { showToast('Enter a question'); return; }
+  if (opts.length < 2) { showToast('Add at least 2 options'); return; }
+  const body = { question, options: opts };
+  if (activeType === 'channel') body.channel_id    = activeId;
+  else                          body.dm_to_user_id = activeId;
+  const res = await authFetch('/chat/polls', 'POST', body);
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Could not create poll'); return; }
+  document.getElementById('pollOverlay').classList.add('hidden');
+  showToast('Poll created! \ud83d\udcca');
+}
+
+function appendPollCard(p) {
+  const card = document.createElement('div');
+  card.className = 'poll-card';
+  card.dataset.pollId = p.id;
+  buildPollCard(card, p);
+  messagesWrap.appendChild(card);
+}
+
+function buildPollCard(card, p) {
+  const totalVotes = p.options.reduce((s, o) => s + o.count, 0);
+  const myVote     = p.options.findIndex(o => o.voters && o.voters.includes(user.id));
+  card.innerHTML = `
+    <h4>${esc(p.question)} <span class="poll-badge">Poll by ${esc(p.creator_name)}</span></h4>
+    ${p.options.map((opt, i) => {
+      const pct = totalVotes ? Math.round(opt.count / totalVotes * 100) : 0;
+      const voted = myVote >= 0;
+      return `<div class="poll-option">
+        <div class="poll-bar-wrap${voted ? ' voted' : ''}" data-option="${i}" onclick="votePoll(${p.id},${i},this)">
+          <div class="poll-bar" style="width:${pct}%"></div>
+          <div class="poll-bar-label">
+            <span>${esc(opt.label)}</span>
+            <span style="color:var(--text-muted)">${pct}%</span>
+          </div>
+        </div>
+      </div>`;
+    }).join('')}
+    <div class="poll-total">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>`;
+}
+
+function updatePollCard(card, p) {
+  buildPollCard(card, p);
+}
+
+window.votePoll = async function(pollId, optionIndex, el) {
+  if (el.closest('.poll-bar-wrap').classList.contains('voted')) { showToast('You already voted'); return; }
+  const res = await authFetch(`/chat/polls/${pollId}/vote`, 'POST', { option_index: optionIndex });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Could not vote'); return; }
+  const updated = await authFetch(`/chat/polls/${pollId}`);
+  if (updated.ok) {
+    const p = await updated.json();
+    const card = document.querySelector(`[data-poll-id="${pollId}"]`);
+    if (card) updatePollCard(card, p);
+  }
+};
 
 // ── Boot (must be last — all consts/lets must be initialized first) ───────────
 if (!user || !token) {

@@ -95,6 +95,25 @@ class ChatMessage(SQLModel, table=True):
     created_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class Poll(SQLModel, table=True):
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    creator_id:    int
+    creator_name:  str
+    question:      str
+    options_json:  str            # JSON array of option strings
+    channel_id:    Optional[int] = Field(default=None)
+    dm_to_user_id: Optional[int] = Field(default=None)
+    created_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PollVote(SQLModel, table=True):
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    poll_id:      int           = Field(index=True)
+    user_id:      int
+    option_index: int
+    created_at:   datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ScheduledMessage(SQLModel, table=True):
     id:            Optional[int] = Field(default=None, primary_key=True)
     sender_id:     int
@@ -461,6 +480,14 @@ async def ws_endpoint(ws: WebSocket, room_code: str, peer_id: str, display_name:
                     "ts":        msg.get("ts", 0),
                 }, exclude=peer_id)
 
+            # -- Raise hand / Reaction / Whiteboard broadcast --
+            elif msg_type in ("raise_hand", "reaction", "whiteboard"):
+                await broadcast_to_room(room_code, {
+                    **msg,
+                    "from_id":   peer_id,
+                    "from_name": display_name,
+                })
+
             else:
                 log.debug("Unknown message type '%s' from %s", msg_type, peer_id)
 
@@ -489,6 +516,29 @@ async def ws_endpoint(ws: WebSocket, room_code: str, peer_id: str, display_name:
 # -------------------------------------------------------------
 # Chat helpers
 # -------------------------------------------------------------
+def _poll_dict(p: Poll, session: Session) -> dict:
+    opts    = json.loads(p.options_json)
+    votes   = session.exec(select(PollVote).where(PollVote.poll_id == p.id)).all()
+    counts  = [0] * len(opts)
+    voters  = [[] for _ in range(len(opts))]
+    for v in votes:
+        if 0 <= v.option_index < len(opts):
+            counts[v.option_index] += 1
+            voters[v.option_index].append(v.user_id)
+    return {
+        "id":            p.id,
+        "creator_id":    p.creator_id,
+        "creator_name":  p.creator_name,
+        "question":      p.question,
+        "options":       opts,
+        "counts":        counts,
+        "voters":        voters,
+        "channel_id":    p.channel_id,
+        "dm_to_user_id": p.dm_to_user_id,
+        "ts":            p.created_at.isoformat(),
+    }
+
+
 def _msg_dict(m: ChatMessage) -> dict:
     return {
         "id":            m.id,
@@ -786,6 +836,91 @@ def cancel_scheduled(
 
 
 # -------------------------------------------------------------
+# Polls
+# -------------------------------------------------------------
+class CreatePollRequest(BaseModel):
+    question:      str
+    options:       List[str]
+    channel_id:    Optional[int] = None
+    dm_to_user_id: Optional[int] = None
+
+
+@app.post("/chat/polls", status_code=201)
+async def create_poll(
+    body: CreatePollRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if len(body.options) < 2:
+        raise HTTPException(400, "Need at least 2 options")
+    poll = Poll(
+        creator_id=current_user.id, creator_name=current_user.name,
+        question=body.question, options_json=json.dumps(body.options),
+        channel_id=body.channel_id, dm_to_user_id=body.dm_to_user_id,
+    )
+    session.add(poll); session.commit(); session.refresh(poll)
+    pd = _poll_dict(poll, session)
+    if body.channel_id:
+        await _chat_broadcast({"type": "poll_created", "poll": pd})
+    elif body.dm_to_user_id:
+        await _chat_send(body.dm_to_user_id, {"type": "poll_created", "poll": pd})
+        await _chat_send(current_user.id,     {"type": "poll_created", "poll": pd})
+    return pd
+
+
+@app.post("/chat/polls/{poll_id}/vote")
+async def vote_poll(
+    poll_id: int,
+    body: dict,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    poll = session.get(Poll, poll_id)
+    if not poll:
+        raise HTTPException(404, "Poll not found")
+    existing = session.exec(
+        select(PollVote).where(PollVote.poll_id == poll_id, PollVote.user_id == current_user.id)
+    ).first()
+    if existing:
+        session.delete(existing); session.commit()
+    opt_idx = int(body.get("option_index", 0))
+    session.add(PollVote(poll_id=poll_id, user_id=current_user.id, option_index=opt_idx))
+    session.commit()
+    pd = _poll_dict(poll, session)
+    if poll.channel_id:
+        await _chat_broadcast({"type": "poll_update", "poll": pd})
+    elif poll.dm_to_user_id:
+        await _chat_send(poll.dm_to_user_id, {"type": "poll_update", "poll": pd})
+        await _chat_send(current_user.id,    {"type": "poll_update", "poll": pd})
+    return pd
+
+
+@app.get("/chat/polls/{poll_id}")
+def get_poll(
+    poll_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    poll = session.get(Poll, poll_id)
+    if not poll:
+        raise HTTPException(404)
+    return _poll_dict(poll, session)
+
+
+@app.get("/chat/channels/{channel_id}/polls")
+def get_channel_polls(
+    channel_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    polls = session.exec(
+        select(Poll).where(Poll.channel_id == channel_id)
+        .order_by(Poll.created_at.desc()).limit(20)
+    ).all()
+    return [_poll_dict(p, session) for p in polls]
+
+
+# -------------------------------------------------------------
 # Chat WebSocket
 # -------------------------------------------------------------
 @app.websocket("/ws/chat/{user_id}")
@@ -886,6 +1021,16 @@ async def chat_ws(ws: WebSocket, user_id: int, token: str = Query(...)):
                     cm.reactions = json.dumps(reacts)
                     session.add(cm); session.commit()
                 await _chat_broadcast({"type": "reaction_update", "message_id": msg_id, "reactions": reacts})
+
+            # -- Read receipt (DM seen) --
+            elif mtype == "mark_dm_read":
+                to_uid = msg.get("to_user_id")
+                if to_uid:
+                    await _chat_send(to_uid, {
+                        "type":       "dm_read",
+                        "by_user_id": user_id,
+                        "by_name":    uname,
+                    })
 
             # -- Thread reply --
             elif mtype == "thread_reply":

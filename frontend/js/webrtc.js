@@ -13,7 +13,7 @@ const ICE_SERVERS = {
 };
 
 class SyncDraxRTC {
-  constructor({ roomCode, displayName, onPeerJoined, onPeerLeft, onPeerStream, onMessage, onParticipantsUpdate }) {
+  constructor({ roomCode, displayName, onPeerJoined, onPeerLeft, onPeerStream, onMessage, onParticipantsUpdate, onData }) {
     this.roomCode   = roomCode;
     this.localName  = displayName;
     this.peerId     = this._genId();
@@ -31,6 +31,7 @@ class SyncDraxRTC {
     this.onPeerStream         = onPeerStream         || (() => {});
     this.onMessage            = onMessage            || (() => {});
     this.onParticipantsUpdate = onParticipantsUpdate || (() => {});
+    this.onData               = onData               || (() => {});  // custom events
   }
 
   _resolveWS() {
@@ -155,6 +156,13 @@ class SyncDraxRTC {
 
       case 'chat': {
         this.onMessage({ from: msg.from_name, text: msg.text, ts: msg.ts, self: false });
+        break;
+      }
+
+      case 'raise_hand':
+      case 'reaction':
+      case 'whiteboard': {
+        this.onData(msg);
         break;
       }
 
@@ -292,6 +300,21 @@ class SyncDraxRTC {
     if (!text.trim()) return;
     this._send({ type: 'chat', text: text.trim() });
     this.onMessage({ from: this.localName, text: text.trim(), ts: Date.now(), self: true });
+  }
+
+  /* =========== CUSTOM DATA (raise_hand, reaction, whiteboard) =========== */
+  sendData(type, data = {}) {
+    this._send({ type, ...data });
+  }
+
+  /* Replace audio track on all peer connections (for noise suppression) */
+  async replaceAudioTrack(newTrack) {
+    const promises = [];
+    this.peers.forEach(peer => {
+      const sender = peer.pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+      if (sender) promises.push(sender.replaceTrack(newTrack));
+    });
+    await Promise.all(promises);
   }
 
   /* =========== DISCONNECT =========== */

@@ -23,7 +23,10 @@
         <video id="lobbyPreview" autoplay muted playsinline class="lobby-video"></video>
         <canvas id="lobbyCanvas" class="lobby-canvas hidden"></canvas>
         <div class="lobby-no-cam hidden" id="lobbyNoCam">
-          <div class="avatar-big" id="lobbyAvatar">?</div>
+          <div class="lobby-avatar-wrap">
+            <div class="avatar-big" id="lobbyAvatar">?</div>
+            <button class="edit-avatar-btn" id="editProfilePicBtn" title="Upload profile picture"><i class="fa-solid fa-camera"></i></button>
+          </div>
           <p class="cam-denied-msg hidden" id="camDeniedMsg">Camera blocked.<br/>Check browser permissions.</p>
         </div>
       </div>
@@ -126,6 +129,7 @@
             </div>
           </div>
           <div class="tile-speaking-ring" id="localSpeakingRing"></div>
+          <div class="raised-hand-badge hidden" id="localHandBadge">✋</div>
         </div>
       </div>
 
@@ -139,6 +143,10 @@
           <button class="tool-btn" id="toggleCam" title="Camera on/off">
             <i class="fa-solid fa-video"></i>
             <span>Camera</span>
+          </button>
+          <button class="tool-btn" id="noiseSuppBtn" title="Noise suppression">
+            <i class="fa-solid fa-waveform-lines"></i>
+            <span>Noise</span>
           </button>
         </div>
 
@@ -155,9 +163,25 @@
             <i class="fa-solid fa-comment-dots"></i>
             <span>Chat</span>
           </button>
+          <button class="tool-btn" id="raiseHandBtn" title="Raise / Lower hand">
+            <i class="fa-solid fa-hand"></i>
+            <span>Hand</span>
+          </button>
+          <button class="tool-btn" id="reactionsBtn" title="Send reaction">
+            <i class="fa-solid fa-face-grin-stars"></i>
+            <span>React</span>
+          </button>
+          <button class="tool-btn" id="whiteboardBtn" title="Whiteboard">
+            <i class="fa-solid fa-chalkboard"></i>
+            <span>Board</span>
+          </button>
         </div>
 
         <div class="toolbar-group">
+          <button class="tool-btn" id="recordBtn" title="Record meeting">
+            <i class="fa-solid fa-circle"></i>
+            <span>Record</span>
+          </button>
           <button class="tool-btn leave-btn" id="leaveBtn" title="Leave meeting">
             <i class="fa-solid fa-phone-slash"></i>
             <span>Leave</span>
@@ -198,6 +222,23 @@
         </div>
       </div>
     </aside>
+
+    <!-- REACTIONS EMOJI PANEL -->
+    <div class="reactions-panel hidden" id="reactionsPanel">
+      <button class="react-emoji-btn" data-emoji="👍">👍</button>
+      <button class="react-emoji-btn" data-emoji="❤️">❤️</button>
+      <button class="react-emoji-btn" data-emoji="😂">😂</button>
+      <button class="react-emoji-btn" data-emoji="🎉">🎉</button>
+      <button class="react-emoji-btn" data-emoji="😮">😮</button>
+      <button class="react-emoji-btn" data-emoji="👏">👏</button>
+      <button class="react-emoji-btn" data-emoji="🔥">🔥</button>
+      <button class="react-emoji-btn" data-emoji="💯">💯</button>
+    </div>
+
+    <!-- RECORD INDICATOR -->
+    <div class="record-indicator hidden" id="recordIndicator">
+      <span class="rec-dot"></span> REC <span id="recTimer">00:00</span>
+    </div>
 
     <!-- BACKGROUNDS PANEL -->
     <div class="bg-panel hidden" id="bgPanel">
@@ -273,14 +314,49 @@
         <h3>Leave meeting?</h3>
         <p>You'll be disconnected from everyone in this call.</p>
         <div class="leave-btns">
-          <button class="btn btn-ghost" id="cancelLeave">Cancel</button>
-          <button class="btn leave-btn" id="confirmLeave">Leave</button>
+          <button class="btn btn-secondary" id="cancelLeave">Stay</button>
+          <button class="btn btn-danger"    id="confirmLeave">Leave</button>
         </div>
       </div>
     </div>
 
-  </div><!-- end meetingRoom -->
+    <!-- MEETING SUMMARY -->
+    <div class="summary-overlay hidden" id="summaryOverlay">
+      <div class="summary-card">
+        <div class="summary-icon">📋</div>
+        <h2>Meeting Summary</h2>
+        <div class="summary-stats">
+          <div class="stat-item"><span id="sumDuration">—</span><label>Duration</label></div>
+          <div class="stat-item"><span id="sumParticipants">—</span><label>Participants</label></div>
+          <div class="stat-item"><span id="sumMessages">—</span><label>Chat msgs</label></div>
+        </div>
+        <div class="summary-names" id="sumNames"></div>
+        <div class="leave-btns">
+          <button class="btn btn-secondary" id="sumStayBtn">Stay</button>
+          <button class="btn btn-danger"    id="sumLeaveBtn">Leave Now</button>
+        </div>
+      </div>
+    </div>
 
+    <!-- WHITEBOARD -->
+    <div class="whiteboard-overlay hidden" id="whiteboardOverlay">
+      <div class="wb-toolbar">
+        <span class="wb-title"><i class="fa-solid fa-chalkboard"></i> Whiteboard</span>
+        <div class="wb-tools">
+          <button class="wb-tool active" id="wbPenBtn"    title="Pen"><i class="fa-solid fa-pen"></i></button>
+          <button class="wb-tool"        id="wbEraserBtn" title="Eraser"><i class="fa-solid fa-eraser"></i></button>
+          <input  type="color"           id="wbColor"     value="#ffffff" class="wb-color-pick" title="Color">
+          <input  type="range"           id="wbSize"      min="2" max="30" value="4" class="wb-size-range">
+          <button class="wb-tool"        id="wbClearBtn"  title="Clear"><i class="fa-solid fa-trash"></i></button>
+        </div>
+        <button class="wb-tool" id="wbCloseBtn" title="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <canvas id="whiteboardCanvas"></canvas>
+    </div>
+
+  </div><!-- /meetingRoom -->
+
+  <input type="file" id="profilePicInput" accept="image/*" style="display:none">
   <input type="file" id="customBgInput" accept="image/*" style="display:none">
   <script src="js/config.js"></script>
   <!-- MediaPipe Selfie Segmentation (real background replacement) -->

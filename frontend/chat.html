@@ -291,6 +291,24 @@
     .sri-text mark { background:rgba(124,58,237,.35); color:var(--text); border-radius:3px; padding:0 2px; }
     .search-empty { padding:28px; text-align:center; color:var(--text-muted); font-size:.85rem; }
 
+    /* ── Poll widget ── */
+    .poll-card { background:var(--bg-sidebar); border:1px solid var(--border);
+                 border-radius:12px; padding:14px 16px; margin-top:6px; max-width:380px; }
+    .poll-card h4 { font-size:.9rem; font-weight:700; margin-bottom:12px; }
+    .poll-option { margin-bottom:8px; }
+    .poll-bar-wrap { background:var(--bg-main); border-radius:6px; height:28px;
+                     position:relative; overflow:hidden; cursor:pointer; border:1px solid var(--border);
+                     display:flex; align-items:center; transition:border-color .15s; }
+    .poll-bar-wrap:hover { border-color:var(--purple); }
+    .poll-bar-wrap.voted { cursor:default; }
+    .poll-bar  { position:absolute; left:0; top:0; height:100%; background:rgba(124,58,237,.25);
+                 transition:width .4s; border-radius:6px 0 0 6px; }
+    .poll-bar-label { position:relative; z-index:1; padding:0 10px; font-size:.8rem;
+                      display:flex; justify-content:space-between; width:100%; align-items:center; }
+    .poll-total { font-size:.72rem; color:var(--text-muted); margin-top:6px; }
+    .poll-badge { display:inline-block; background:rgba(124,58,237,.2); color:var(--purple-l);
+                  font-size:.65rem; font-weight:700; border-radius:6px;
+                  padding:1px 7px; margin-left:8px; vertical-align:middle; }
     /* ── Schedule modal ── */
     .sched-list { margin-top:16px; max-height:200px; overflow-y:auto; }
     .sched-item { display:flex; align-items:center; gap:10px; padding:8px 0;
@@ -358,8 +376,8 @@
     <div class="chat-header">
       <span id="chatTitle" class="chat-title"># general</span>
       <span id="chatDesc" class="chat-desc"></span>
-      <div class="header-actions">
-        <button class="ia-btn" id="searchBtn" title="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
+      <div class="header-actions">        <button class="ia-btn" id="notifBtn" title="Enable notifications">🔔</button>
+        <button class="ia-btn" id="createPollBtn" title="Create poll"><i class="fa-solid fa-chart-bar"></i></button>        <button class="ia-btn" id="searchBtn" title="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
         <span id="pinnedBadge" class="pinned-badge hidden">📌 0 pinned</span>
       </div>
     </div>
@@ -460,6 +478,24 @@
     <div class="modal-row" style="margin-top:20px;">
       <button class="modal-btn secondary" id="cancelSchedBtn">Cancel</button>
       <button class="modal-btn primary" id="createSchedBtn">Schedule</button>
+    </div>
+  </div>
+</div>
+
+<!-- Poll creation modal -->
+<div class="overlay hidden" id="pollOverlay">
+  <div class="modal-card" style="width:460px;">
+    <h3>📊 Create a Poll</h3>
+    <label>Question</label>
+    <input class="modal-input" id="pollQuestion" placeholder="What do you want to ask?" maxlength="200" />
+    <label style="margin-top:12px;">Options (min 2, max 4)</label>
+    <input class="modal-input" id="pollOpt0" placeholder="Option 1" maxlength="80" style="margin-bottom:8px;" />
+    <input class="modal-input" id="pollOpt1" placeholder="Option 2" maxlength="80" style="margin-bottom:8px;" />
+    <input class="modal-input" id="pollOpt2" placeholder="Option 3 (optional)" maxlength="80" style="margin-bottom:8px;" />
+    <input class="modal-input" id="pollOpt3" placeholder="Option 4 (optional)" maxlength="80" />
+    <div class="modal-row" style="margin-top:20px;">
+      <button class="modal-btn secondary" id="cancelPollBtn">Cancel</button>
+      <button class="modal-btn primary" id="submitPollBtn">Create Poll</button>
     </div>
   </div>
 </div>
