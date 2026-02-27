@@ -20,6 +20,18 @@
 .meeting-room.chat-open {
   grid-template-columns: var(--sidebar-w, 240px) 1fr var(--chat-w, 320px);
 }
+.meeting-room.sidebar-collapsed {
+  grid-template-columns: 0 1fr;
+}
+.meeting-room.sidebar-collapsed.chat-open {
+  grid-template-columns: 0 1fr var(--chat-w, 320px);
+}
+.meeting-room.sidebar-collapsed .sidebar {
+  display: none;
+}
+.meeting-room.sidebar-collapsed .sidebar-resize-handle {
+  display: none;
+}
 
 /* ================== SIDEBAR ================== */
 .sidebar {

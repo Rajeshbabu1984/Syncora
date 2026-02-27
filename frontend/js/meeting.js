@@ -709,8 +709,7 @@
 
   // Participants sidebar toggle
   document.getElementById('toggleParticipantsPanel').addEventListener('click', () => {
-    document.querySelector('.sidebar').style.display =
-      document.querySelector('.sidebar').style.display === 'none' ? '' : 'none';
+    meetingRoom.classList.toggle('sidebar-collapsed');
   });
 
   /* -------------------- SIDEBAR RESIZE -------------------- */
