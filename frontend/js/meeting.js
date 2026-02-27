@@ -717,32 +717,48 @@
   (function initSidebarResize() {
     const handle = document.getElementById('sidebarResizeHandle');
     if (!handle) return;
-    const room = meetingRoom;
+    const room    = meetingRoom;
+    const sidebar = document.querySelector('.sidebar');
+
+    function positionHandle() {
+      const roomRect    = room.getBoundingClientRect();
+      const sidebarRect = sidebar.getBoundingClientRect();
+      handle.style.left = (sidebarRect.right - roomRect.left) + 'px';
+      handle.style.top  = '0';
+      handle.style.height = roomRect.height + 'px';
+    }
+
+    // Position handle whenever the room is visible
+    const observer = new MutationObserver(positionHandle);
+    observer.observe(room, { attributes: true, attributeFilter: ['class', 'style'] });
+    window.addEventListener('resize', positionHandle);
+    positionHandle();
+
     let startX = 0;
     let startW = 0;
 
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
       startX = e.clientX;
-      startW = document.querySelector('.sidebar').offsetWidth;
+      startW = sidebar.offsetWidth;
       handle.classList.add('dragging');
-      document.body.style.cursor = 'col-resize';
+      document.body.style.cursor    = 'col-resize';
       document.body.style.userSelect = 'none';
 
       function onMove(e) {
-        const delta = e.clientX - startX;
-        const newW  = Math.min(420, Math.max(160, startW + delta));
+        const newW = Math.min(420, Math.max(160, startW + (e.clientX - startX)));
         room.style.setProperty('--sidebar-w', newW + 'px');
+        positionHandle();
       }
       function onUp() {
         handle.classList.remove('dragging');
-        document.body.style.cursor = '';
+        document.body.style.cursor    = '';
         document.body.style.userSelect = '';
         document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('mouseup',   onUp);
       }
       document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      document.addEventListener('mouseup',   onUp);
     });
   })();
 

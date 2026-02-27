@@ -37,17 +37,19 @@
 /* Sidebar resize handle */
 .sidebar-resize-handle {
   position: absolute;
-  top: 0; right: -3px;
-  width: 6px; height: 100%;
+  top: 0;
+  width: 8px;
+  height: 100%;
   cursor: col-resize;
-  z-index: 50;
+  z-index: 100;
   background: transparent;
   transition: background 0.15s;
+  transform: translateX(-50%);
 }
 .sidebar-resize-handle:hover,
 .sidebar-resize-handle.dragging {
   background: var(--purple);
-  opacity: 0.5;
+  opacity: 0.6;
 }
 .sidebar-header {
   display: flex;
