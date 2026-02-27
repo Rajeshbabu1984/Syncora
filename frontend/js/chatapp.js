@@ -271,6 +271,7 @@ function handleServerMsg(msg) {
         if (btn) { btn.title = msg.pinned ? 'Unpin' : 'Pin'; btn.style.color = msg.pinned ? 'var(--purple-l)' : ''; }
         if (msg.pinned) msgEl.dataset.pinned = '1'; else delete msgEl.dataset.pinned;
       }
+      // Reload pinned bar for all users (handles remote pin/unpin; local already handled optimistically)
       if (activeType === 'channel') loadPinnedMessages(activeId);
       break;
     }
@@ -777,11 +778,50 @@ async function loadPinnedMessages(channelId) {
 function renderPinnedBar(msgs) {
   const bar = document.getElementById('pinnedBar');
   bar.innerHTML = msgs.map(m => `
-    <div class="pin-item">
+    <div class="pin-item" data-pin-id="${m.id}">
       <span class="pin-who">${esc(m.sender_name)}</span>
-      <span class="pin-text">${esc(m.content || (m.file_name ? '📎 ' + m.file_name : ''))}</span>
-      <button class="unpin-btn" onclick="togglePin(${m.id})" title="Unpin">✕</button>
+      <span class="pin-text pin-jump" onclick="scrollToPinnedMsg(${m.id})" title="Jump to message">${esc(m.content || (m.file_name ? '📎 ' + m.file_name : ''))}</span>
+      <button class="unpin-btn" onclick="unpinFromBar(${m.id}, this)" title="Unpin">📌 Unpin</button>
     </div>`).join('');
+}
+
+function scrollToPinnedMsg(msgId) {
+  const el = document.querySelector(`[data-msg-id="${msgId}"]`);
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('msg-highlight');
+    setTimeout(() => el.classList.remove('msg-highlight'), 1500);
+  }
+}
+
+async function unpinFromBar(msgId, btn) {
+  // Optimistic: remove pin item immediately so UI feels instant
+  const pinItem = btn.closest('[data-pin-id]');
+  if (pinItem) pinItem.remove();
+  const bar   = document.getElementById('pinnedBar');
+  const badge = document.getElementById('pinnedBadge');
+  const remaining = bar.querySelectorAll('[data-pin-id]').length;
+  if (remaining === 0) {
+    bar.classList.add('hidden');
+    bar.innerHTML = '';
+    badge.classList.add('hidden');
+  } else {
+    badge.textContent = `📌 ${remaining} pinned`;
+  }
+  // Also update the pin button on the message bubble
+  const msgEl = document.querySelector(`[data-msg-id="${msgId}"]`);
+  if (msgEl) {
+    const pinBtn = msgEl.querySelector('.pin-msg-btn');
+    if (pinBtn) { pinBtn.title = 'Pin'; pinBtn.style.color = ''; }
+    delete msgEl.dataset.pinned;
+  }
+  // Fire API in background
+  const res = await authFetch(`/chat/messages/${msgId}/pin`, 'POST');
+  if (!res.ok) {
+    showToast('Could not unpin message');
+    // Refresh to restore correct state
+    if (activeType === 'channel') loadPinnedMessages(activeId);
+  }
 }
 
 function togglePinnedBar() {

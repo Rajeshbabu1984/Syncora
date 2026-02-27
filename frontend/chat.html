@@ -232,10 +232,15 @@
                             border-bottom:1px solid rgba(255,255,255,.05); }
     .pinned-bar .pin-item:last-child { border-bottom:none; }
     .pinned-bar .pin-text { flex:1; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .pinned-bar .pin-text.pin-jump:hover { color:var(--purple-l); text-decoration:underline; }
     .pinned-bar .pin-who  { color:var(--text-muted); font-size:.72rem; }
-    .pinned-bar .unpin-btn { background:none; border:none; color:var(--text-muted); cursor:pointer;
-                              font-size:.8rem; padding:2px 6px; border-radius:4px; }
-    .pinned-bar .unpin-btn:hover { color:#e55; }
+    .pinned-bar .unpin-btn { background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.3);
+                              color:var(--purple-l); cursor:pointer; font-size:.75rem;
+                              padding:2px 8px; border-radius:4px; white-space:nowrap; }
+    .pinned-bar .unpin-btn:hover { background:#e55; border-color:#e55; color:#fff; }
+    /* Flash highlight when jumping to a message */
+    @keyframes msgHighlight { 0%,100%{background:transparent} 30%{background:rgba(124,58,237,.25)} }
+    .msg-highlight { animation: msgHighlight 1.5s ease; border-radius:6px; }
 
     /* ── Thread panel ── */
     .thread-panel { width:320px; min-width:320px; background:var(--bg-sidebar);
