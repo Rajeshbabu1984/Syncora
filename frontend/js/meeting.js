@@ -564,32 +564,45 @@
   });
 
   // Background panel
+  const bgOptionsContainer = document.getElementById('bgOptions');
   toggleBgBtn.addEventListener('click', () => bgPanel.classList.toggle('hidden'));
   closeBgPanel.addEventListener('click', () => bgPanel.classList.add('hidden'));
 
-  bgOptions.forEach(opt => {
-    opt.addEventListener('click', async (e) => {
-      if (e.target.closest('.dl-btn')) return; // handled by download button
-      bgOptions.forEach(o => o.classList.remove('active'));
-      opt.classList.add('active');
-      const bgKey = opt.dataset.bg;
-      if (!bgEngineLocal) return;
-      const canvasTrack = bgEngineLocal.setBackground(bgKey);
-      // Swap WebRTC video track so peers see the processed background too
-      if (rtc) {
-        if (bgKey === 'none') {
-          const camTrack = localStream && localStream.getVideoTracks()[0];
-          if (camTrack) await rtc.replaceVideoTrack(camTrack);
-        } else if (canvasTrack) {
-          await rtc.replaceVideoTrack(canvasTrack);
-        }
+  bgOptionsContainer.addEventListener('click', async (e) => {
+    if (e.target.closest('.dl-btn')) return;
+    const opt = e.target.closest('.bg-option');
+    if (!opt) return;
+    const bgKey = opt.dataset.bg;
+    // Custom tile just triggers the file picker
+    if (bgKey === 'custom') { document.getElementById('customBgInput').click(); return; }
+    document.querySelectorAll('.bg-option').forEach(o => o.classList.remove('active'));
+    opt.classList.add('active');
+    if (!bgEngineLocal) return;
+    const canvasTrack = bgEngineLocal.setBackground(bgKey);
+    if (rtc) {
+      if (bgKey === 'none') {
+        const camTrack = localStream && localStream.getVideoTracks()[0];
+        if (camTrack) await rtc.replaceVideoTrack(camTrack);
+      } else if (canvasTrack) {
+        await rtc.replaceVideoTrack(canvasTrack);
       }
-    });
+    }
   });
 
   // Custom background upload
   const customBgInput   = document.getElementById('customBgInput');
   const uploadBgOption  = document.getElementById('uploadBgOption');
+
+  // Restore previously uploaded custom background from localStorage
+  (function restoreCustomBg() {
+    const saved = localStorage.getItem('syncdrax_custom_bg');
+    if (!saved) return;
+    const opt = document.createElement('div');
+    opt.className = 'bg-option';
+    opt.dataset.bg = 'custom';
+    opt.innerHTML = `<div class="bg-thumb" style="background-image:url('${saved}');background-size:cover;background-position:center;"></div><span>My Upload</span>`;
+    document.getElementById('bgOptions').appendChild(opt);
+  })();
 
   uploadBgOption.addEventListener('click', () => customBgInput.click());
 
@@ -600,10 +613,20 @@
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const dataUrl = ev.target.result;
-      // Mark all tiles inactive (custom upload has no tile)
-      bgOptions.forEach(o => o.classList.remove('active'));
-      uploadBgOption.classList.add('active');
-      setTimeout(() => uploadBgOption.classList.remove('active'), 600);
+      // Save to localStorage so it persists across meetings
+      try { localStorage.setItem('syncdrax_custom_bg', dataUrl); } catch(e) {}
+      // Add or update the custom tile
+      let customTile = document.querySelector('[data-bg="custom"]');
+      if (!customTile) {
+        customTile = document.createElement('div');
+        customTile.className = 'bg-option';
+        customTile.dataset.bg = 'custom';
+        customTile.innerHTML = `<div class="bg-thumb"></div><span>My Upload</span>`;
+        document.getElementById('bgOptions').appendChild(customTile);
+      }
+      customTile.querySelector('.bg-thumb').style.cssText = `background-image:url('${dataUrl}');background-size:cover;background-position:center;`;
+      document.querySelectorAll('.bg-option').forEach(o => o.classList.remove('active'));
+      customTile.classList.add('active');
       if (!bgEngineLocal) return;
       const canvasTrack = bgEngineLocal.setCustomBackground(dataUrl);
       if (rtc && canvasTrack) await rtc.replaceVideoTrack(canvasTrack);
