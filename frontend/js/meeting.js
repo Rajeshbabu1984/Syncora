@@ -463,6 +463,7 @@
   bgOptions.forEach(opt => {
     opt.addEventListener('click', async (e) => {
       if (e.target.closest('.dl-btn')) return; // handled by download button
+      if (opt.dataset.bg === 'custom') return;  // handled by file input
       bgOptions.forEach(o => o.classList.remove('active'));
       opt.classList.add('active');
       const bgKey = opt.dataset.bg;
@@ -478,6 +479,34 @@
         }
       }
     });
+  });
+
+  // Custom background upload
+  const customBgInput   = document.getElementById('customBgInput');
+  const uploadBgOption  = document.getElementById('uploadBgOption');
+  const uploadBgThumb   = document.getElementById('uploadBgThumb');
+  const uploadBgLabel   = document.getElementById('uploadBgLabel');
+
+  uploadBgOption.addEventListener('click', () => customBgInput.click());
+
+  customBgInput.addEventListener('change', async () => {
+    const file = customBgInput.files[0];
+    if (!file) return;
+    customBgInput.value = ''; // allow re-picking same file
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const dataUrl = ev.target.result;
+      // Update tile thumbnail
+      uploadBgThumb.style.cssText = `background-image:url('${dataUrl}');background-size:cover;background-position:center;font-size:0;border:none;`;
+      uploadBgLabel.textContent = file.name.replace(/\.[^.]+$/, '').substring(0, 14);
+      // Mark active
+      bgOptions.forEach(o => o.classList.remove('active'));
+      uploadBgOption.classList.add('active');
+      if (!bgEngineLocal) return;
+      const canvasTrack = bgEngineLocal.setCustomBackground(dataUrl);
+      if (rtc && canvasTrack) await rtc.replaceVideoTrack(canvasTrack);
+    };
+    reader.readAsDataURL(file);
   });
 
   // Download background buttons

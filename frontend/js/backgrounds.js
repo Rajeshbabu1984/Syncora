@@ -460,6 +460,15 @@ class BackgroundEngine {
       URL.revokeObjectURL(url);
     }, 'image/png');
   }
+
+  /** Set a custom uploaded image as background */
+  setCustomBackground(dataUrl) {
+    const img = new Image();
+    img.src = dataUrl;
+    BACKGROUNDS['custom'] = { type: 'image', src: dataUrl };
+    this._imgCache['custom'] = img;
+    return this.setBackground('custom');
+  }
 }
 
 window.BackgroundEngine = BackgroundEngine;
