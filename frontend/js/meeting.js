@@ -192,6 +192,20 @@
 
   /* -------------------- ENTER MEETING -------------------- */
   function enterMeeting() {
+    // Sync toolbar buttons to lobby toggle state
+    toggleMicBtn.classList.toggle('muted', !micEnabled);
+    toggleMicBtn.querySelector('i').className = micEnabled
+      ? 'fa-solid fa-microphone'
+      : 'fa-solid fa-microphone-slash';
+    toggleMicBtn.querySelector('span').textContent = micEnabled ? 'Mute' : 'Unmute';
+    localMicIcon.classList.toggle('hidden', micEnabled);
+
+    toggleCamBtn.classList.toggle('muted', !camEnabled);
+    toggleCamBtn.querySelector('i').className = camEnabled
+      ? 'fa-solid fa-video'
+      : 'fa-solid fa-video-slash';
+    toggleCamBtn.querySelector('span').textContent = camEnabled ? 'Camera' : 'Cam Off';
+
     // Populate sidebar info
     sidebarRoomCode.textContent    = ROOM_CODE;
     sidebarRoomCodeCopy.textContent = ROOM_CODE;
@@ -405,7 +419,13 @@
   toggleCamBtn.addEventListener('click', () => {
     camEnabled = !camEnabled;
     rtc && rtc.toggleCamera(camEnabled);
-    if (localStream) localStream.getVideoTracks().forEach(t => t.enabled = camEnabled);
+    if (localStream) {
+      localStream.getVideoTracks().forEach(t => t.enabled = camEnabled);
+      if (camEnabled && !localVideo.srcObject) {
+        localVideo.srcObject = localStream;
+        localVideo.play().catch(() => {});
+      }
+    }
     toggleCamBtn.classList.toggle('muted', !camEnabled);
     toggleCamBtn.querySelector('i').className = camEnabled
       ? 'fa-solid fa-video'
