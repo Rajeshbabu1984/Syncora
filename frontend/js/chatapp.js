@@ -751,7 +751,9 @@ async function deleteChannel(e, channelId) {
 async function togglePin(msgId) {
   const res = await authFetch(`/chat/messages/${msgId}/pin`, 'POST');
   if (res.status === 403) { showToast('Only the channel owner can pin messages'); return; }
-  if (!res.ok) showToast('Could not pin message');
+  if (!res.ok) { showToast('Could not pin message'); return; }
+  // Always refresh the pinned bar/badge immediately, don't wait for WS event
+  if (activeType === 'channel') await loadPinnedMessages(activeId);
 }
 
 async function loadPinnedMessages(channelId) {
