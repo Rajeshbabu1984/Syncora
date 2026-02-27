@@ -298,6 +298,8 @@
     localAvatar.style.background   = avatarColor(displayName);
     lobbyAvatar.textContent        = initials(displayName);
     addSelfToSidebar();
+    // Sidebar starts visible — mark the participants button as active
+    document.getElementById('toggleParticipantsPanel').classList.add('active');
 
     if (localStream) {
       const videoTrack = localStream.getVideoTracks()[0];
@@ -708,8 +710,15 @@
   });
 
   // Participants sidebar toggle
-  document.getElementById('toggleParticipantsPanel').addEventListener('click', () => {
-    meetingRoom.classList.toggle('sidebar-collapsed');
+  const toggleParticipantsBtn = document.getElementById('toggleParticipantsPanel');
+  toggleParticipantsBtn.addEventListener('click', () => {
+    const isCollapsed = meetingRoom.classList.toggle('sidebar-collapsed');
+    toggleParticipantsBtn.classList.toggle('active', !isCollapsed);
+    if (!isCollapsed) {
+      // Restore to default width if it was dragged to 0 or is missing
+      const curW = parseInt(getComputedStyle(meetingRoom).getPropertyValue('--sidebar-w')) || 0;
+      if (curW < 120) meetingRoom.style.setProperty('--sidebar-w', '240px');
+    }
   });
 
   /* -------------------- SIDEBAR RESIZE -------------------- */
