@@ -5,33 +5,14 @@
 
 // ── Migrate old localStorage keys (syncora_ → syncdrax_) ────────────────────
 (function migrateLegacyKeys() {
-  const pairs = [['syncora_user', 'syncdrax_user'], ['syncora_token', 'syncdrax_token']];
-  pairs.forEach(([oldKey, newKey]) => {
-    if (!localStorage.getItem(newKey) && localStorage.getItem(oldKey)) {
-      localStorage.setItem(newKey, localStorage.getItem(oldKey));
-      localStorage.removeItem(oldKey);
-    }
-  });
-  // If the stored token was signed with the old secret key it will be rejected
-  // by the backend (403 on WS / 401 on REST). Detect this by checking the
-  // JWT payload’s issued-at: tokens created before the rename have a
-  // sub-string ‘syncora’ nowhere — but we can detect them by the old header.
-  // Simplest heuristic: wipe the token if it was issued when the old .env
-  // SECRET_KEY was in use (before Feb 26 2026, the rename date).
-  const tok = localStorage.getItem('syncdrax_token');
-  if (tok) {
-    try {
-      const payload = JSON.parse(atob(tok.split('.')[1]));
-      // Tokens issued before 2026-02-26 00:00 UTC are stale (old secret key)
-      const RENAME_EPOCH = 1740528000; // 2026-02-26 00:00 UTC
-      if (payload.iat && payload.iat < RENAME_EPOCH) {
-        localStorage.removeItem('syncdrax_token');
-        localStorage.removeItem('syncdrax_user');
-      }
-    } catch (_) {
-      localStorage.removeItem('syncdrax_token');
-      localStorage.removeItem('syncdrax_user');
-    }
+  const AUTH_VERSION = '3'; // bump this whenever the JWT secret changes
+  if (localStorage.getItem('syncdrax_auth_v') !== AUTH_VERSION) {
+    // Wipe all auth — forces fresh sign-in with new secret key
+    localStorage.removeItem('syncdrax_token');
+    localStorage.removeItem('syncdrax_user');
+    localStorage.removeItem('syncora_token');
+    localStorage.removeItem('syncora_user');
+    localStorage.setItem('syncdrax_auth_v', AUTH_VERSION);
   }
 })();
 

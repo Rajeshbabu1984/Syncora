@@ -174,27 +174,13 @@
 
     // Migrate old localStorage keys (syncora_ → syncdrax_)
     (function migrateLegacyKeys() {
-      const pairs = [['syncora_user', 'syncdrax_user'], ['syncora_token', 'syncdrax_token']];
-      pairs.forEach(([oldKey, newKey]) => {
-        if (!localStorage.getItem(newKey) && localStorage.getItem(oldKey)) {
-          localStorage.setItem(newKey, localStorage.getItem(oldKey));
-          localStorage.removeItem(oldKey);
-        }
-      });
-      // Wipe tokens issued before the rename (old secret key — will be rejected by backend)
-      const tok = localStorage.getItem('syncdrax_token');
-      if (tok) {
-        try {
-          const payload = JSON.parse(atob(tok.split('.')[1]));
-          const RENAME_EPOCH = 1740528000; // 2026-02-26 00:00 UTC
-          if (payload.iat && payload.iat < RENAME_EPOCH) {
-            localStorage.removeItem('syncdrax_token');
-            localStorage.removeItem('syncdrax_user');
-          }
-        } catch (_) {
-          localStorage.removeItem('syncdrax_token');
-          localStorage.removeItem('syncdrax_user');
-        }
+      const AUTH_VERSION = '3'; // bump this whenever the JWT secret changes
+      if (localStorage.getItem('syncdrax_auth_v') !== AUTH_VERSION) {
+        localStorage.removeItem('syncdrax_token');
+        localStorage.removeItem('syncdrax_user');
+        localStorage.removeItem('syncora_token');
+        localStorage.removeItem('syncora_user');
+        localStorage.setItem('syncdrax_auth_v', AUTH_VERSION);
       }
     })();
 
