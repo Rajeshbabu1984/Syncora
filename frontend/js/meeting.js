@@ -324,10 +324,10 @@
       emojiBtn:    emojiBtn,
       emojiPicker: emojiPicker,
       badgeEl:     chatBadge,
-      onSend: (text) => {
+      onSend: (text, replyTo) => {
         meetingChatCount++;
         if (rtc) rtc.sendChatMessage(text);
-        else chat.addMessage({ from: displayName, text, ts: Date.now(), self: true });
+        chat.addMessage({ from: displayName, text, ts: Date.now(), self: true, replyTo: replyTo || null });
       }
     });
     window._chat = chat;

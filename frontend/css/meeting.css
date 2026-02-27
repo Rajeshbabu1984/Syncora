@@ -388,8 +388,10 @@
   padding: 6px 10px;
   border-radius: 8px;
   transition: background 0.1s;
+  position: relative;
 }
 .chat-msg:hover { background: var(--bg-tertiary); }
+.chat-msg:hover .chat-msg-actions { opacity: 1; }
 .chat-msg-header {
   display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px;
 }
@@ -398,6 +400,100 @@
 .chat-msg-text { font-size: 0.88rem; color: var(--text-primary); word-wrap: break-word; line-height: 1.5; }
 
 .chat-msg.own .chat-msg-name { color: var(--purple-light); }
+
+/* Message action buttons (react / reply / delete) */
+.chat-msg-actions {
+  opacity: 0;
+  position: absolute;
+  top: 4px; right: 6px;
+  display: flex; gap: 2px;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+.chat-msg-action-btn {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+}
+.chat-msg-action-btn:hover { background: var(--bg-hover); color: var(--text-bright); }
+.chat-msg-action-btn.del:hover { color: #e55; border-color: rgba(220,50,50,.6); }
+
+/* Reply quote block (shown in a message that has a reply) */
+.chat-reply-quote {
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--purple);
+  border-radius: 0 6px 6px 0;
+  padding: 4px 8px;
+  margin-bottom: 5px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.chat-reply-quote strong { color: var(--purple-light); margin-right: 5px; }
+
+/* Per-message emoji popup */
+.chat-emoji-msg-picker {
+  position: absolute;
+  top: -48px; right: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  display: flex; gap: 4px;
+  z-index: 200;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.chat-emoji-msg-picker button {
+  background: none; border: none;
+  font-size: 1.15rem; cursor: pointer;
+  border-radius: 5px; padding: 2px 3px;
+  transition: transform 0.1s;
+}
+.chat-emoji-msg-picker button:hover { transform: scale(1.25); background: var(--bg-hover); }
+
+/* Reaction pills */
+.chat-msg-reactions {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 4px;
+}
+.chat-reaction-pill {
+  display: flex; align-items: center; gap: 3px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1px 7px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  user-select: none;
+}
+.chat-reaction-pill:hover { background: var(--bg-hover); border-color: var(--purple); }
+.chat-reaction-pill.mine  { background: rgba(124,58,237,0.2); border-color: var(--purple); }
+
+/* Reply-to bar above input */
+.chat-reply-bar {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(124,58,237,0.12);
+  border: 1px solid rgba(124,58,237,0.3);
+  border-radius: 8px;
+  padding: 5px 10px;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+}
+.chat-reply-bar.hidden { display: none; }
+.crb-label { color: var(--purple-light); white-space: nowrap; flex-shrink: 0; }
+.crb-preview { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-muted); }
+.crb-cancel { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; padding: 0 2px; flex-shrink: 0; }
+.crb-cancel:hover { color: #e55; }
 
 .chat-input-area {
   border-top: 1px solid var(--border);
