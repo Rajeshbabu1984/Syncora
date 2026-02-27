@@ -181,6 +181,21 @@
           localStorage.removeItem(oldKey);
         }
       });
+      // Wipe tokens issued before the rename (old secret key — will be rejected by backend)
+      const tok = localStorage.getItem('syncdrax_token');
+      if (tok) {
+        try {
+          const payload = JSON.parse(atob(tok.split('.')[1]));
+          const RENAME_EPOCH = 1740528000; // 2026-02-26 00:00 UTC
+          if (payload.iat && payload.iat < RENAME_EPOCH) {
+            localStorage.removeItem('syncdrax_token');
+            localStorage.removeItem('syncdrax_user');
+          }
+        } catch (_) {
+          localStorage.removeItem('syncdrax_token');
+          localStorage.removeItem('syncdrax_user');
+        }
+      }
     })();
 
     function generateCode() {

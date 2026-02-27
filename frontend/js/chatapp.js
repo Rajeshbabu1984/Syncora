@@ -12,6 +12,27 @@
       localStorage.removeItem(oldKey);
     }
   });
+  // If the stored token was signed with the old secret key it will be rejected
+  // by the backend (403 on WS / 401 on REST). Detect this by checking the
+  // JWT payload’s issued-at: tokens created before the rename have a
+  // sub-string ‘syncora’ nowhere — but we can detect them by the old header.
+  // Simplest heuristic: wipe the token if it was issued when the old .env
+  // SECRET_KEY was in use (before Feb 26 2026, the rename date).
+  const tok = localStorage.getItem('syncdrax_token');
+  if (tok) {
+    try {
+      const payload = JSON.parse(atob(tok.split('.')[1]));
+      // Tokens issued before 2026-02-26 00:00 UTC are stale (old secret key)
+      const RENAME_EPOCH = 1740528000; // 2026-02-26 00:00 UTC
+      if (payload.iat && payload.iat < RENAME_EPOCH) {
+        localStorage.removeItem('syncdrax_token');
+        localStorage.removeItem('syncdrax_user');
+      }
+    } catch (_) {
+      localStorage.removeItem('syncdrax_token');
+      localStorage.removeItem('syncdrax_user');
+    }
+  }
 })();
 
 const API = typeof API_BASE !== 'undefined' ? API_BASE : 'http://localhost:8000';
@@ -570,7 +591,12 @@ async function createChannel() {
   if (!rawName) { showToast('Enter a channel name'); return; }
   const fullName = `${pendingEmoji} ${rawName}`;
   const res = await authFetch('/chat/channels', 'POST', { name: fullName, description: desc });
-  if (!res.ok) { showToast('Could not create channel'); return; }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    console.error('[createChannel] failed:', res.status, err);
+    showToast(err.detail || 'Could not create channel');
+    return;
+  }
   const ch = await res.json();
   channels.push(ch);
   renderChannelList();

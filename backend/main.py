@@ -549,7 +549,7 @@ def create_channel(
     session.add(ch)
     session.commit()
     session.refresh(ch)
-    return {"id": ch.id, "name": ch.name, "description": ch.description}
+    return {"id": ch.id, "name": ch.name, "description": ch.description, "created_by": ch.created_by}
 
 
 @app.get("/chat/channels/{channel_id}/messages")
