@@ -18,7 +18,7 @@
   overflow: hidden;
 }
 .meeting-room.chat-open {
-  grid-template-columns: var(--sidebar-w, 240px) 1fr 320px;
+  grid-template-columns: var(--sidebar-w, 240px) 1fr var(--chat-w, 320px);
 }
 
 /* ================== SIDEBAR ================== */
@@ -30,8 +30,6 @@
   overflow-y: auto;
   padding-bottom: 16px;
   position: relative;
-  min-width: 160px;
-  max-width: 420px;
 }
 
 /* Sidebar resize handle */
@@ -339,6 +337,23 @@
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  position: relative;
+}
+
+/* Chat panel resize handle (left edge) */
+.chat-resize-handle {
+  position: absolute;
+  top: 0; left: 0;
+  width: 8px; height: 100%;
+  cursor: col-resize;
+  z-index: 100;
+  background: transparent;
+  transition: background 0.15s;
+}
+.chat-resize-handle:hover,
+.chat-resize-handle.dragging {
+  background: var(--purple);
+  opacity: 0.6;
 }
 .chat-header {
   display: flex; align-items: center; justify-content: space-between;
