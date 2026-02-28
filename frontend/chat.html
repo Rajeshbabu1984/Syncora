@@ -343,6 +343,43 @@
     .sched-del { background:none; border:none; color:var(--text-muted); cursor:pointer;
                  font-size:.85rem; padding:2px 6px; border-radius:4px; }
     .sched-del:hover { color:#e55; }
+
+    /* ── Bots modal ── */
+    .bots-modal { width:560px; max-width:96vw; max-height:82vh; overflow-y:auto; }
+    .bots-modal h3 { margin-bottom:20px; }
+    .bots-section-title { font-size:.78rem; font-weight:700; color:var(--text-muted);
+                          text-transform:uppercase; letter-spacing:.07em; margin-bottom:10px; }
+    .bot-item { background:var(--bg-main); border:1px solid var(--border);
+                border-radius:10px; padding:12px 14px; display:flex; align-items:center;
+                gap:12px; margin-bottom:8px; }
+    .bot-item:last-child { margin-bottom:0; }
+    .bot-avatar-em { font-size:1.5rem; flex-shrink:0; }
+    .bot-info  { flex:1; min-width:0; }
+    .bot-name-lbl { font-weight:700; font-size:.9rem; }
+    .bot-token-row { display:flex; align-items:center; gap:6px; margin-top:5px; }
+    .bot-token { font-size:.7rem; color:var(--text-muted); font-family:monospace;
+                 background:var(--bg-input); border:1px solid var(--border);
+                 border-radius:5px; padding:3px 7px; flex:1; overflow:hidden;
+                 text-overflow:ellipsis; white-space:nowrap; user-select:all; }
+    .copy-webhook-btn { background:var(--bg-active); border:1px solid var(--purple);
+                        color:var(--purple-l); border-radius:5px; padding:3px 9px;
+                        font-size:.72rem; cursor:pointer; font-weight:600;
+                        white-space:nowrap; transition:background .15s; }
+    .copy-webhook-btn:hover { background:rgba(124,58,237,.4); }
+    .del-bot-btn { background:none; border:1px solid #444; color:var(--text-muted);
+                   border-radius:6px; padding:4px 9px; cursor:pointer; font-size:.78rem;
+                   transition:all .15s; flex-shrink:0; }
+    .del-bot-btn:hover { background:rgba(220,50,50,.15); border-color:#e55; color:#e55; }
+    .avatar-pick { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:12px; }
+    .av-btn { background:var(--bg-main); border:1px solid var(--border); border-radius:7px;
+              font-size:1.2rem; padding:4px 8px; cursor:pointer; transition:all .12s; }
+    .av-btn:hover { border-color:var(--purple); }
+    .av-btn.sel { border-color:var(--purple-l); background:var(--bg-active); }
+    .bots-divider { border:none; border-top:1px solid var(--border); margin:18px 0; }
+    .bot-howto pre { background:var(--bg-main); border:1px solid var(--border);
+                     border-radius:7px; padding:12px 14px; font-family:monospace;
+                     font-size:.73rem; color:var(--text-muted); overflow-x:auto;
+                     white-space:pre; margin-top:8px; }
   </style>
 </head>
 <body>
@@ -388,10 +425,10 @@
       <div class="sidebar-section" style="margin-top:12px;">
         <div class="section-header">
           <span>Bots</span>
-          <a href="bots.html" class="btn-add" title="Manage bots" style="text-decoration:none;">⚙</a>
+          <button class="btn-add" id="openBotsBtn" title="Manage bots">⚙</button>
         </div>
         <ul class="channel-list">
-          <li><a href="bots.html" style="color:var(--text-muted);text-decoration:none;font-size:0.82rem;padding:3px 0;display:block;">🤖 SyncBot &amp; Webhooks</a></li>
+          <li><button onclick="openBotsModal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.82rem;padding:3px 0;display:block;width:100%;text-align:left;">🤖 SyncBot &amp; Webhooks</button></li>
         </ul>
       </div>
     </div>
@@ -532,6 +569,42 @@
     <div class="modal-row" style="margin-top:20px;">
       <button class="modal-btn secondary" id="cancelPollBtn">Cancel</button>
       <button class="modal-btn primary" id="submitPollBtn">Create Poll</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bots modal -->
+<div class="overlay hidden" id="botsOverlay">
+  <div class="modal-card bots-modal">
+    <h3>🤖 Bots &amp; Webhooks</h3>
+
+    <!-- My Bots -->
+    <div class="bots-section-title">My Bots</div>
+    <div id="botListModal"><div style="color:var(--text-muted);font-size:.85rem;">Loading…</div></div>
+
+    <hr class="bots-divider" />
+
+    <!-- Create Bot -->
+    <div class="bots-section-title">Create a Bot</div>
+    <div class="avatar-pick" id="avatarPickModal"></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <input id="botNameInputModal" class="modal-input" placeholder="Bot name (e.g. DeployBot)" maxlength="40" style="flex:1;min-width:180px;" />
+      <button class="modal-btn primary" style="flex:0 0 auto;padding:9px 18px;" onclick="createBotModal()">Create</button>
+    </div>
+
+    <hr class="bots-divider" />
+
+    <!-- How to use -->
+    <div class="bots-section-title">How to call a webhook</div>
+    <div class="bot-howto">
+      <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:6px;">POST to the webhook URL from any script, CI/CD, or automation:</p>
+      <pre>curl -X POST https://your-server/bots/webhook/YOUR_TOKEN \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Build passed ✅", "channel_id": 1}'</pre>
+    </div>
+
+    <div class="modal-row" style="margin-top:20px;">
+      <button class="modal-btn secondary" onclick="closeBotsModal()">Close</button>
     </div>
   </div>
 </div>

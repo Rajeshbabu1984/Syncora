@@ -117,6 +117,8 @@ async function initChat() {
   });
   addChannelBtn.addEventListener('click', openAddChannelModal);
   addDmBtn.addEventListener('click', openDmModal);
+  document.getElementById('openBotsBtn').addEventListener('click', openBotsModal);
+  document.getElementById('openBotsBtn').addEventListener('click', openBotsModal);
   document.getElementById('cancelChannelBtn').addEventListener('click', closeAddChannelModal);
   document.getElementById('createChannelBtn').addEventListener('click', createChannel);
   document.getElementById('cancelDmBtn').addEventListener('click', () =>
@@ -1294,6 +1296,100 @@ window.votePoll = async function(pollId, optionIndex, el) {
 };
 
 // ── Boot (must be last — all consts/lets must be initialized first) ───────────
+
+// ── Bots modal ───────────────────────────────────────────────────────────────────────────────
+const BOT_AVATARS = ['🤖','🦾','🛸','🔧','🚀','🐧','🦊','⭐','⚡','🎯','🔥','💡'];
+let botsData          = [];
+let selectedBotAvatar = BOT_AVATARS[0];
+
+function openBotsModal() {
+  document.getElementById('botsOverlay').classList.remove('hidden');
+  buildAvatarPickerModal();
+  fetchBots();
+}
+
+window.closeBotsModal = function() {
+  document.getElementById('botsOverlay').classList.add('hidden');
+};
+
+function buildAvatarPickerModal() {
+  const el = document.getElementById('avatarPickModal');
+  if (el.children.length) return;
+  BOT_AVATARS.forEach(em => {
+    const btn = document.createElement('button');
+    btn.className = `av-btn${em === selectedBotAvatar ? ' sel' : ''}`;
+    btn.textContent = em;
+    btn.onclick = () => {
+      selectedBotAvatar = em;
+      el.querySelectorAll('.av-btn').forEach(b => b.classList.remove('sel'));
+      btn.classList.add('sel');
+    };
+    el.appendChild(btn);
+  });
+}
+
+async function fetchBots() {
+  const el = document.getElementById('botListModal');
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;">Loading…</div>';
+  const res = await authFetch('/bots');
+  if (!res.ok) { el.innerHTML = '<div style="color:#e55;font-size:.82rem;">Failed to load.</div>'; return; }
+  botsData = await res.json();
+  renderBotsModal();
+}
+
+function renderBotsModal() {
+  const el = document.getElementById('botListModal');
+  if (!botsData.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:.85rem;padding:4px 0;">No bots yet — create one below.</div>';
+    return;
+  }
+  el.innerHTML = '';
+  botsData.forEach(b => {
+    const webhookUrl = `${API}/bots/webhook/${b.webhook_token}`;
+    const item = document.createElement('div');
+    item.className = 'bot-item';
+    item.innerHTML = `
+      <div class="bot-avatar-em">${esc(b.avatar)}</div>
+      <div class="bot-info">
+        <div class="bot-name-lbl">${esc(b.name)}</div>
+        <div class="bot-token-row">
+          <span class="bot-token" title="${webhookUrl}">${webhookUrl}</span>
+          <button class="copy-webhook-btn" onclick="copyBotWebhook('${webhookUrl}',this)">Copy</button>
+        </div>
+      </div>
+      <button class="del-bot-btn" onclick="deleteBotModal(${b.id})">Remove</button>`;
+    el.appendChild(item);
+  });
+}
+
+window.createBotModal = async function() {
+  const name = document.getElementById('botNameInputModal').value.trim();
+  if (!name) { showToast('Enter a bot name'); return; }
+  const res = await authFetch('/bots', 'POST', { name, avatar: selectedBotAvatar });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Create failed'); return; }
+  const bot = await res.json();
+  botsData.push(bot);
+  renderBotsModal();
+  document.getElementById('botNameInputModal').value = '';
+  showToast(`✅ Bot “${bot.name}” created!`);
+};
+
+window.deleteBotModal = async function(id) {
+  if (!confirm('Delete this bot? Its webhook URL will stop working.')) return;
+  const res = await authFetch(`/bots/${id}`, 'DELETE');
+  if (!res.ok) { showToast('Delete failed'); return; }
+  botsData = botsData.filter(b => b.id !== id);
+  renderBotsModal();
+  showToast('Bot deleted');
+};
+
+window.copyBotWebhook = function(url, btn) {
+  navigator.clipboard.writeText(url).then(() => {
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 2000);
+  }).catch(() => showToast('Copy failed'));
+};
+
 if (!user || !token) {
   document.getElementById('authGate').classList.remove('hidden');
 } else {
