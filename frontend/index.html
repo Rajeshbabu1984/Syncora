@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
-  <title>SyncDrax � Collaborate Without Limits</title>
+  <title>SyncTact � Collaborate Without Limits</title>
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -20,7 +20,7 @@
       <div class="nav-logo">
         <i class="fa-solid fa-bolt"></i>
       </div>
-      <span class="nav-title">SyncDrax</span>
+      <span class="nav-title">SyncTact</span>
     </div>
     <div class="nav-links">
       <a href="#features" class="nav-link">Features</a>
@@ -59,7 +59,7 @@
           <span class="preview-dot red"></span>
           <span class="preview-dot yellow"></span>
           <span class="preview-dot green"></span>
-          <span class="preview-title">SyncDrax Meeting</span>
+          <span class="preview-title">SyncTact Meeting</span>
         </div>
         <div class="preview-grid">
           <div class="preview-tile active">
@@ -128,7 +128,7 @@
   <!-- FOOTER -->
   <footer class="footer">
     <div class="footer-brand">
-      <i class="fa-solid fa-bolt"></i> SyncDrax
+      <i class="fa-solid fa-bolt"></i> SyncTact
     </div>
     <div class="footer-links">
       <a href="tos.html" class="footer-link">Terms of Service</a>
@@ -137,7 +137,7 @@
       <span style="color:var(--border)">�</span>
       <a href="admin.html" class="footer-link"><i class="fa-solid fa-shield-halved" style="font-size:0.75em"></i> Admin Panel</a>
     </div>
-    <p class="footer-copy">� 2026 SyncDrax. Built for teams that move fast.</p>
+    <p class="footer-copy">� 2026 SyncTact. Built for teams that move fast.</p>
   </footer>
 
   <!-- AUTH MODAL -->
@@ -173,15 +173,15 @@
   <script>
     const API = typeof API_BASE !== 'undefined' ? API_BASE : 'http://localhost:8000';
 
-    // Migrate old localStorage keys (syncora_ → syncdrax_)
+    // Migrate old localStorage keys (synctact_ → synctact_)
     (function migrateLegacyKeys() {
       const AUTH_VERSION = '3'; // bump this whenever the JWT secret changes
-      if (localStorage.getItem('syncdrax_auth_v') !== AUTH_VERSION) {
-        localStorage.removeItem('syncdrax_token');
-        localStorage.removeItem('syncdrax_user');
-        localStorage.removeItem('syncora_token');
-        localStorage.removeItem('syncora_user');
-        localStorage.setItem('syncdrax_auth_v', AUTH_VERSION);
+      if (localStorage.getItem('synctact_auth_v') !== AUTH_VERSION) {
+        localStorage.removeItem('synctact_token');
+        localStorage.removeItem('synctact_user');
+        localStorage.removeItem('synctact_token');
+        localStorage.removeItem('synctact_user');
+        localStorage.setItem('synctact_auth_v', AUTH_VERSION);
       }
     })();
 
@@ -190,14 +190,14 @@
     }
 
     /* -- Auth helpers -- */
-    function getUser()  { try { return JSON.parse(localStorage.getItem('syncdrax_user')); } catch { return null; } }
+    function getUser()  { try { return JSON.parse(localStorage.getItem('synctact_user')); } catch { return null; } }
     function saveUser(u, token) {
-      localStorage.setItem('syncdrax_user', JSON.stringify(u));
-      if (token) localStorage.setItem('syncdrax_token', token);
+      localStorage.setItem('synctact_user', JSON.stringify(u));
+      if (token) localStorage.setItem('synctact_token', token);
     }
     function signOut()  {
-      localStorage.removeItem('syncdrax_user');
-      localStorage.removeItem('syncdrax_token');
+      localStorage.removeItem('synctact_user');
+      localStorage.removeItem('synctact_token');
       updateNav();
     }
 

@@ -1,5 +1,5 @@
-/* =======================================================
-   SyncDrax — WebRTC Signaling & Peer Management
+﻿/* =======================================================
+   SyncTact — WebRTC Signaling & Peer Management
    ======================================================= */
 
 const MAX_PARTICIPANTS = 30;
@@ -12,7 +12,7 @@ const ICE_SERVERS = {
   ],
 };
 
-class SyncDraxRTC {
+class SyncTactRTC {
   constructor({ roomCode, displayName, onPeerJoined, onPeerLeft, onPeerStream, onMessage, onParticipantsUpdate, onData }) {
     this.roomCode   = roomCode;
     this.localName  = displayName;
@@ -55,12 +55,12 @@ class SyncDraxRTC {
       this.ws = new WebSocket(this.wsUrl);
 
       this.ws.onopen = () => {
-        console.log('[SyncDraxRTC] WebSocket connected');
+        console.log('[SyncTactRTC] WebSocket connected');
         resolve();
       };
 
       this.ws.onerror = (e) => {
-        console.error('[SyncDraxRTC] WS error', e);
+        console.error('[SyncTactRTC] WS error', e);
         reject(e);
       };
 
@@ -69,12 +69,12 @@ class SyncDraxRTC {
           const msg = JSON.parse(evt.data);
           this._handleMessage(msg);
         } catch (e) {
-          console.error('[SyncDraxRTC] bad message', e);
+          console.error('[SyncTactRTC] bad message', e);
         }
       };
 
       this.ws.onclose = () => {
-        console.log('[SyncDraxRTC] WS disconnected');
+        console.log('[SyncTactRTC] WS disconnected');
         // attempt reconnect after 3s
         setTimeout(() => {
           if (document.visibilityState !== 'hidden') this._reconnect();
@@ -85,9 +85,9 @@ class SyncDraxRTC {
 
   _reconnect() {
     if (this._disconnecting) return;
-    console.log('[SyncDraxRTC] Reconnecting…');
+    console.log('[SyncTactRTC] Reconnecting…');
     this.ws = new WebSocket(this.wsUrl);
-    this.ws.onopen    = () => console.log('[SyncDraxRTC] Reconnected');
+    this.ws.onopen    = () => console.log('[SyncTactRTC] Reconnected');
     this.ws.onmessage = (evt) => {
       try { this._handleMessage(JSON.parse(evt.data)); } catch (e) {}
     };
@@ -327,4 +327,4 @@ class SyncDraxRTC {
   }
 }
 
-window.SyncDraxRTC = SyncDraxRTC;
+window.SyncTactRTC = SyncTactRTC;

@@ -1,5 +1,5 @@
-"""
-SyncDrax � Signaling Server + Auth API
+﻿"""
+SyncTact � Signaling Server + Auth API
 Built with FastAPI + uvicorn + SQLModel
 
 Run:
@@ -40,12 +40,12 @@ load_dotenv()
 # -------------------------------------------------------------
 # Config
 # -------------------------------------------------------------
-SECRET_KEY        = os.getenv("SECRET_KEY", "syncdrax-dev-secret-change-in-production")
+SECRET_KEY        = os.getenv("SECRET_KEY", "synctact-dev-secret-change-in-production")
 ALGORITHM        = "HS256"
 TOKEN_EXPIRE_DAYS = 30
-ADMIN_KEY         = os.getenv("ADMIN_KEY", "syncdrax-admin-2026")
+ADMIN_KEY         = os.getenv("ADMIN_KEY", "synctact-admin-2026")
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./syncdrax.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./synctact.db")
 UPLOADS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
@@ -53,7 +53,7 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 # Logging
 # -------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
-log = logging.getLogger("syncdrax")
+log = logging.getLogger("synctact")
 
 MAX_PEERS_PER_ROOM = 30
 
@@ -249,7 +249,7 @@ class AuthResponse(BaseModel):
 # -------------------------------------------------------------
 # App
 # -------------------------------------------------------------
-app = FastAPI(title="SyncDrax Signaling Server", version="2.0.0")
+app = FastAPI(title="SyncTact Signaling Server", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,

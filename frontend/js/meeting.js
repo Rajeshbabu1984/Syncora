@@ -1,5 +1,5 @@
-/* =======================================================
-   SyncDrax — Meeting Orchestrator (meeting.js)
+﻿/* =======================================================
+   SyncTact — Meeting Orchestrator (meeting.js)
    ======================================================= */
 
 (async function () {
@@ -128,7 +128,7 @@
   let _wbCtx              = null;
 
   // Auth — chat is only available to signed-in users
-  const IS_SIGNED_IN = !!localStorage.getItem('syncdrax_user');
+  const IS_SIGNED_IN = !!localStorage.getItem('synctact_user');
 
   const AVATAR_COLORS = ['#7c3aed','#059669','#dc2626','#d97706','#0284c7','#db2777','#16a34a','#9333ea'];
   const peerTileMap   = new Map(); // peerId -> tile element
@@ -163,8 +163,8 @@
 
   /* -------------------- LOBBY SETUP -------------------- */
   roomCodeDisplay.textContent = ROOM_CODE;
-  const _storedUser = (() => { try { return JSON.parse(localStorage.getItem('syncdrax_user')); } catch { return null; } })();
-  displayNameInput.value = (_storedUser && _storedUser.name) || localStorage.getItem('syncdrax_name') || '';
+  const _storedUser = (() => { try { return JSON.parse(localStorage.getItem('synctact_user')); } catch { return null; } })();
+  displayNameInput.value = (_storedUser && _storedUser.name) || localStorage.getItem('synctact_name') || '';
 
   // Get local media
   try {
@@ -172,7 +172,7 @@
     lobbyPreview.srcObject = localStream;
     await lobbyPreview.play().catch(() => {});
   } catch (err) {
-    console.warn('[SyncDrax] getUserMedia failed:', err.name, err.message);
+    console.warn('[SyncTact] getUserMedia failed:', err.name, err.message);
     // Show cam-denied message if permission was denied
     const deniedMsg = document.getElementById('camDeniedMsg');
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -189,7 +189,7 @@
 
   // Apply saved profile picture to lobby avatar
   (function applyProfilePic() {
-    const savedPic = localStorage.getItem('syncdrax_avatar');
+    const savedPic = localStorage.getItem('synctact_avatar');
     if (!savedPic) return;
     [lobbyAvatar, localAvatar].forEach(el => {
       if (!el) return;
@@ -210,7 +210,7 @@
     const reader = new FileReader();
     reader.onload = (ev) => {
       const dataUrl = ev.target.result;
-      localStorage.setItem('syncdrax_avatar', dataUrl);
+      localStorage.setItem('synctact_avatar', dataUrl);
       [lobbyAvatar, localAvatar].forEach(el => {
         el.style.backgroundImage = `url('${dataUrl}')`;
         el.style.backgroundSize  = 'cover';
@@ -259,7 +259,7 @@
   /* -------------------- JOIN -------------------- */
   joinNowBtn.addEventListener('click', async () => {
     displayName = (displayNameInput.value.trim() || 'Guest').substring(0, 24);
-    localStorage.setItem('syncdrax_name', displayName);
+    localStorage.setItem('synctact_name', displayName);
 
     // If no stream from getUserMedia, create a silent stream
     if (!localStream) {
@@ -292,7 +292,7 @@
     // Populate sidebar info
     sidebarRoomCode.textContent    = ROOM_CODE;
     sidebarRoomCodeCopy.textContent = ROOM_CODE;
-    topbarTitle.textContent        = `SyncDrax — ${ROOM_CODE}`;
+    topbarTitle.textContent        = `SyncTact — ${ROOM_CODE}`;
     localNameEl.textContent        = displayName;
     localAvatar.textContent        = initials(displayName);
     localAvatar.style.background   = avatarColor(displayName);
@@ -344,7 +344,7 @@
     }, 1000);
 
     // Init RTC
-    rtc = new SyncDraxRTC({
+    rtc = new SyncTactRTC({
       roomCode:   ROOM_CODE,
       displayName: displayName,
 
@@ -575,7 +575,7 @@
     const bgKey = opt.dataset.bg;
     // Custom tile: apply the saved background, don't open file picker
     if (bgKey === 'custom') {
-      const saved = localStorage.getItem('syncdrax_custom_bg');
+      const saved = localStorage.getItem('synctact_custom_bg');
       if (!saved) { document.getElementById('customBgInput').click(); return; }
       document.querySelectorAll('.bg-option').forEach(o => o.classList.remove('active'));
       opt.classList.add('active');
@@ -604,7 +604,7 @@
 
   // Restore previously uploaded custom background from localStorage
   (function restoreCustomBg() {
-    const saved = localStorage.getItem('syncdrax_custom_bg');
+    const saved = localStorage.getItem('synctact_custom_bg');
     if (!saved) return;
     const opt = document.createElement('div');
     opt.className = 'bg-option';
@@ -623,7 +623,7 @@
     reader.onload = async (ev) => {
       const dataUrl = ev.target.result;
       // Save to localStorage so it persists across meetings
-      try { localStorage.setItem('syncdrax_custom_bg', dataUrl); } catch(e) {}
+      try { localStorage.setItem('synctact_custom_bg', dataUrl); } catch(e) {}
       // Add or update the custom tile
       let customTile = document.querySelector('[data-bg="custom"]');
       if (!customTile) {
@@ -952,7 +952,7 @@
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href     = url;
-        a.download = `SyncDrax-recording-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
+        a.download = `SyncTact-recording-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
         a.click();
         URL.revokeObjectURL(url);
         showToast('Recording saved!');

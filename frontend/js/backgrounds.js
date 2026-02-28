@@ -1,5 +1,5 @@
-/* =======================================================
-   SyncDrax — Virtual Backgrounds (MediaPipe Selfie Segmentation)
+﻿/* =======================================================
+   SyncTact — Virtual Backgrounds (MediaPipe Selfie Segmentation)
    Real person segmentation — works like Zoom / Google Meet
    ======================================================= */
 
@@ -448,14 +448,14 @@ class BackgroundEngine {
     c.globalAlpha = 0.12;
     c.font        = 'bold 36px Lato, sans-serif';
     c.fillStyle   = '#fff';
-    c.fillText('? SyncDrax', 40, 1050);
+    c.fillText('? SyncTact', 40, 1050);
     c.globalAlpha = 1;
 
     tmp.toBlob(blob => {
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
       a.href     = url;
-      a.download = `syncdrax-wallpaper-${name || bgKey}.png`;
+      a.download = `synctact-wallpaper-${name || bgKey}.png`;
       a.click();
       URL.revokeObjectURL(url);
     }, 'image/png');

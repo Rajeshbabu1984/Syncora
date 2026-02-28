@@ -1,18 +1,18 @@
-/**
- * SyncDrax — Chat App (chatapp.js)
+﻿/**
+ * SyncTact — Chat App (chatapp.js)
  */
 'use strict';
 
-// ── Migrate old localStorage keys (syncora_ → syncdrax_) ────────────────────
+// ── Migrate old localStorage keys (synctact_ → synctact_) ────────────────────
 (function migrateLegacyKeys() {
   const AUTH_VERSION = '3'; // bump this whenever the JWT secret changes
-  if (localStorage.getItem('syncdrax_auth_v') !== AUTH_VERSION) {
+  if (localStorage.getItem('synctact_auth_v') !== AUTH_VERSION) {
     // Wipe all auth — forces fresh sign-in with new secret key
-    localStorage.removeItem('syncdrax_token');
-    localStorage.removeItem('syncdrax_user');
-    localStorage.removeItem('syncora_token');
-    localStorage.removeItem('syncora_user');
-    localStorage.setItem('syncdrax_auth_v', AUTH_VERSION);
+    localStorage.removeItem('synctact_token');
+    localStorage.removeItem('synctact_user');
+    localStorage.removeItem('synctact_token');
+    localStorage.removeItem('synctact_user');
+    localStorage.setItem('synctact_auth_v', AUTH_VERSION);
   }
 })();
 
@@ -20,8 +20,8 @@ const API = typeof API_BASE !== 'undefined' ? API_BASE : 'http://localhost:8000'
 const WSS = typeof WS_BASE  !== 'undefined' ? WS_BASE  : 'ws://localhost:8000';
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-function getUser()  { try { return JSON.parse(localStorage.getItem('syncdrax_user')); } catch { return null; } }
-function getToken() { return localStorage.getItem('syncdrax_token') || ''; }
+function getUser()  { try { return JSON.parse(localStorage.getItem('synctact_user')); } catch { return null; } }
+function getToken() { return localStorage.getItem('synctact_token') || ''; }
 
 const user  = getUser();
 const token = getToken();
@@ -1300,7 +1300,7 @@ function maybePushNotif(senderName, body) {
   if (Notification.permission !== 'granted') return;
   if (document.visibilityState === 'visible') return;
   try {
-    new Notification(`SyncDrax — ${senderName}`, {
+    new Notification(`SyncTact — ${senderName}`, {
       body: body.slice(0, 120),
       icon: 'data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 100 100\'><text y=\'.9em\' font-size=\'90\'>\u26a1</text></svg>'
     });
