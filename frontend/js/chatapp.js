@@ -209,9 +209,13 @@ function handleServerMsg(msg) {
         unread[m.channel_id] = (unread[m.channel_id] || 0) + 1;
         updateUnreadBadge(m.channel_id);
       }
-      // Auto-open URL if Volt recurring task includes one
-      if (msg.open_url && m.bot_name === 'Volt') {
-        window.open(msg.open_url, '_blank', 'noopener,noreferrer');
+      // Auto-open URL if Volt recurring task / webhook includes one
+      if (msg.open_url && m.bot_name) {
+        // open_url_for_uid absent → everyone; present → only that user
+        const forUid = msg.open_url_for_uid;
+        if (forUid === undefined || forUid === null || forUid === user.id) {
+          window.open(msg.open_url, '_blank', 'noopener,noreferrer');
+        }
       }
       // Desktop notification for Volt automated messages
       if (m.bot_name === 'Volt') {
@@ -1448,7 +1452,7 @@ function renderTasks() {
       <div style="flex:1;min-width:0;">
         <div style="font-size:.85rem;color:var(--text-primary);word-break:break-word;margin-bottom:3px;">${esc(t.message)}</div>
         <div style="font-size:.75rem;color:var(--text-muted);">${esc(chName)} &middot; ${interval} &middot; last: ${lastRun}</div>
-        ${t.open_url ? `<div style="font-size:.72rem;color:#7ab4f5;margin-top:2px;">&#128279; ${esc(t.open_url)}</div>` : ''}
+        ${t.open_url ? `<div style="font-size:.72rem;color:#7ab4f5;margin-top:2px;">&#128279; ${esc(t.open_url)} <span style="color:var(--text-muted);">(for: ${t.url_target === 'channel' ? 'everyone in channel' : 'just me'})</span></div>` : ''}
         ${t.shell_cmd ? `<div style="font-size:.72rem;color:#f5c97a;margin-top:2px;">&#9881; ${esc(t.shell_cmd)}</div>` : ''}
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
@@ -1467,6 +1471,7 @@ window.createTask = async function() {
   const unit     = parseInt(document.getElementById('taskIntervalUnit').value);
   const openUrl  = document.getElementById('taskUrlInput')?.value.trim() || null;
   const shellCmd = document.getElementById('taskShellInput')?.value.trim() || null;
+  const urlTarget = document.getElementById('taskUrlTarget')?.value || 'self';
   if (!msg) { showToast('Enter a message'); return; }
   if (!chanId) { showToast('Select a channel'); return; }
   const res = await authFetch('/tasks', 'POST', {
@@ -1475,6 +1480,7 @@ window.createTask = async function() {
     interval_minutes: interval * unit,
     ...(openUrl  ? { open_url:  openUrl  } : {}),
     ...(shellCmd ? { shell_cmd: shellCmd } : {}),
+    url_target: urlTarget,
   });
   if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Failed to create task'); return; }
   const task = await res.json();

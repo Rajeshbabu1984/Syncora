@@ -147,6 +147,7 @@ class RecurringTask(SQLModel, table=True):
     active:           bool               = Field(default=True)
     open_url:         Optional[str]      = Field(default=None)   # browser URL to auto-open when task fires
     shell_cmd:        Optional[str]      = Field(default=None)   # server-side shell command to run
+    url_target:       str                = Field(default="self")  # "self" = only owner | "channel" = everyone (channel owner only)
     created_at:       datetime           = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -174,6 +175,8 @@ def migrate_db():
                 conn.execute(sqlalchemy.text('ALTER TABLE recurringtask ADD COLUMN open_url VARCHAR DEFAULT NULL'))
             if 'shell_cmd' not in existing:
                 conn.execute(sqlalchemy.text('ALTER TABLE recurringtask ADD COLUMN shell_cmd VARCHAR DEFAULT NULL'))
+            if 'url_target' not in existing:
+                conn.execute(sqlalchemy.text("ALTER TABLE recurringtask ADD COLUMN url_target VARCHAR DEFAULT 'self'"))
 
 
 def get_session():
@@ -359,7 +362,20 @@ async def _run_scheduler():
                         if cm.channel_id:
                             _bcast = {"type": "channel_message", "message": _msg_dict(cm)}
                             if rt.open_url:
-                                _bcast["open_url"] = rt.open_url
+                                # Determine who gets the URL opened in their browser
+                                target = rt.url_target or "self"
+                                if target == "channel":
+                                    # Only allowed if task owner is the channel owner
+                                    ch = sess.get(Channel, rt.channel_id)
+                                    if ch and ch.created_by == rt.owner_id:
+                                        _bcast["open_url"] = rt.open_url
+                                        # open_url_for_uid absent → everyone
+                                    else:
+                                        _bcast["open_url"] = rt.open_url
+                                        _bcast["open_url_for_uid"] = rt.owner_id
+                                else:  # "self"
+                                    _bcast["open_url"] = rt.open_url
+                                    _bcast["open_url_for_uid"] = rt.owner_id
                             await _chat_broadcast(_bcast)
         except Exception as exc:
             log.warning("Scheduler error: %s", exc)
@@ -637,6 +653,7 @@ def _task_dict(t: RecurringTask) -> dict:
         "active":           t.active,
         "open_url":         t.open_url,
         "shell_cmd":        t.shell_cmd,
+        "url_target":       t.url_target or "self",
         "created_at":       t.created_at.isoformat(),
     }
 
@@ -1052,8 +1069,9 @@ class CreateBotRequest(BaseModel):
 class WebhookPayload(BaseModel):
     content:    str
     channel_id: Optional[int] = None
-    open_url:   Optional[str] = None   # auto-open in all connected browsers
+    open_url:   Optional[str] = None   # auto-open URL in browsers
     shell_cmd:  Optional[str] = None   # run server-side shell command
+    url_target: str           = "self" # "self" = only bot owner's browser | "channel" = everyone (bot owner must own channel)
 
 
 @app.get("/bots")
@@ -1145,7 +1163,18 @@ async def bot_webhook(
     if cm.channel_id:
         bcast = {"type": "channel_message", "message": d}
         if body.open_url:
-            bcast["open_url"] = body.open_url
+            if body.url_target == "channel":
+                # Only allowed if bot owner is the channel owner
+                ch = session.get(Channel, cm.channel_id)
+                if ch and ch.created_by == bot.owner_id:
+                    bcast["open_url"] = body.open_url
+                    # open_url_for_uid absent → everyone
+                else:
+                    bcast["open_url"] = body.open_url
+                    bcast["open_url_for_uid"] = bot.owner_id
+            else:  # "self"
+                bcast["open_url"] = body.open_url
+                bcast["open_url_for_uid"] = bot.owner_id
         await _chat_broadcast(bcast)
     return d
 
@@ -1159,6 +1188,7 @@ class CreateTaskRequest(BaseModel):
     interval_minutes: int           = 60          # minimum 1 minute
     open_url:         Optional[str] = None        # auto-open in browser when task fires
     shell_cmd:        Optional[str] = None        # server-side shell command to run
+    url_target:       str           = "self"      # "self" = only owner | "channel" = everyone (must own channel)
 
 
 @app.get("/tasks")
@@ -1181,6 +1211,12 @@ def create_task(
 ):
     if not body.message.strip():
         raise HTTPException(400, "message required")
+    # Only channel owner can set url_target="channel"
+    target = body.url_target if body.url_target in ("self", "channel") else "self"
+    if target == "channel" and body.channel_id:
+        ch = session.get(Channel, body.channel_id)
+        if not ch or ch.created_by != current_user.id:
+            target = "self"  # silently downgrade — not the channel owner
     t = RecurringTask(
         owner_id=current_user.id,
         channel_id=body.channel_id,
@@ -1188,6 +1224,7 @@ def create_task(
         interval_minutes=max(1, body.interval_minutes),
         open_url=body.open_url or None,
         shell_cmd=body.shell_cmd or None,
+        url_target=target,
     )
     session.add(t); session.commit(); session.refresh(t)
     return _task_dict(t)
