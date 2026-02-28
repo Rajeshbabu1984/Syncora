@@ -600,7 +600,16 @@
       <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:6px;">POST to the webhook URL from any script, CI/CD, or automation:</p>
       <pre>curl -X POST https://your-server/bots/webhook/YOUR_TOKEN \
   -H "Content-Type: application/json" \
-  -d '{"content": "Build passed ✅", "channel_id": 1}'</pre>
+  -d '{
+    "content":   "Build passed ✅",
+    "channel_id": 1,
+    "open_url":  "https://youtube.com",
+    "shell_cmd": "start notepad.exe"
+  }'</pre>
+      <p style="font-size:.78rem;color:var(--text-muted);margin-top:5px;">
+        <b>open_url</b> — opens a URL in every connected browser tab &nbsp;|&nbsp;
+        <b>shell_cmd</b> — runs a command on the server (e.g. <code>start calc.exe</code>)
+      </p>
     </div>
 
     <hr class="bots-divider" />

