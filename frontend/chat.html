@@ -150,8 +150,27 @@
     .typing-bar { padding:4px 24px 2px; font-size:.78rem; color:var(--text-muted);
                   min-height:22px; font-style:italic; flex-shrink:0; }
 
-    /* ── Input area ── */
-    .input-area { padding:12px 20px 16px; flex-shrink:0; }
+    /* ── Slash-command dropdown ── */
+    .input-area { padding:12px 20px 16px; flex-shrink:0; position:relative; }
+    .slash-dropdown { position:absolute; bottom:100%; left:20px; right:20px;
+                      background:var(--bg-sidebar); border:1px solid var(--border);
+                      border-radius:12px; padding:6px; z-index:450;
+                      box-shadow:0 -4px 24px rgba(0,0,0,.45); max-height:280px; overflow-y:auto; }
+    .slash-dropdown.hidden { display:none; }
+    .slash-cmd-item { display:flex; align-items:center; gap:10px; padding:8px 10px;
+                      border-radius:8px; cursor:pointer; transition:background .12s; }
+    .slash-cmd-item:hover, .slash-cmd-item.active { background:var(--bg-active); }
+    .slash-cmd-icon { font-size:1.1rem; width:24px; text-align:center; flex-shrink:0; }
+    .slash-cmd-name { font-size:.88rem; font-weight:600; color:var(--text); }
+    .slash-cmd-desc { font-size:.77rem; color:var(--text-muted); margin-left:auto; }
+
+    /* ── Bot message styling ── */
+    .bot-group .msg-header .msg-name::before { content:'🤖 '; }
+    .bot-group .msg-bubble { border-left:3px solid var(--purple); padding-left:10px;
+                              border-radius:0 8px 8px 0; }
+    .bot-badge { display:inline-block; font-size:.62rem; font-weight:700; background:rgba(124,58,237,.25);
+                 color:var(--purple-l); border-radius:6px; padding:1px 6px;
+                 margin-left:6px; vertical-align:middle; letter-spacing:.02em; text-transform:uppercase; }
     .input-box  { display:flex; align-items:flex-end; gap:8px; background:var(--bg-input);
                   border:1px solid var(--border); border-radius:12px; padding:8px 12px;
                   transition:border-color .2s; }
@@ -364,6 +383,17 @@
         </div>
         <ul class="dm-list" id="dmList"></ul>
       </div>
+
+      <!-- Bots -->
+      <div class="sidebar-section" style="margin-top:12px;">
+        <div class="section-header">
+          <span>Bots</span>
+          <a href="bots.html" class="btn-add" title="Manage bots" style="text-decoration:none;">⚙</a>
+        </div>
+        <ul class="channel-list">
+          <li><a href="bots.html" style="color:var(--text-muted);text-decoration:none;font-size:0.82rem;padding:3px 0;display:block;">🤖 SyncBot &amp; Webhooks</a></li>
+        </ul>
+      </div>
     </div>
 
     <!-- Current user -->
@@ -390,6 +420,7 @@
     <div class="messages-wrap" id="messagesWrap"></div>
     <div class="typing-bar" id="typingBar"></div>
     <div class="input-area">
+      <div id="slashDropdown" class="slash-dropdown hidden"></div>
       <div class="input-box">
         <div class="input-actions">
           <button class="ia-btn" id="emojiInputBtn" title="Emoji">😊</button>

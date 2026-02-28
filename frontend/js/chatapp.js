@@ -91,7 +91,15 @@ async function initChat() {
   sendBtn.addEventListener('click', sendMessage);
   msgInput.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.key === 'Escape') hideSlashDropdown();
+    if (e.key === 'ArrowDown') { slashSelectDelta(1); e.preventDefault(); }
+    if (e.key === 'ArrowUp')   { slashSelectDelta(-1); e.preventDefault(); }
     sendTyping();
+  });
+  msgInput.addEventListener('input', () => {
+    const v = msgInput.value;
+    if (v.startsWith('/')) showSlashDropdown(v);
+    else hideSlashDropdown();
   });
   addChannelBtn.addEventListener('click', openAddChannelModal);
   addDmBtn.addEventListener('click', openDmModal);
@@ -443,21 +451,26 @@ async function loadMessages(type, id) {
 
 function appendMessage(m, initial) {
   const wrap = messagesWrap;
-  // Group by sender + within 5 min
+  // Group by sender + within 5 min (also keep bot names separate)
   const last = wrap.lastElementChild;
   const lastSenderId = last?.dataset?.senderId;
+  const lastBotName  = last?.dataset?.botName || '';
   const lastTs       = last?.dataset?.ts ? parseInt(last.dataset.ts) : 0;
   const thisTsMs     = new Date(m.ts).getTime();
-  const grouped      = lastSenderId === String(m.sender_id) && (thisTsMs - lastTs) < 5 * 60 * 1000;
+  const thisBotName  = m.bot_name || '';
+  const grouped      = lastSenderId === String(m.sender_id) && (thisTsMs - lastTs) < 5 * 60 * 1000 && lastBotName === thisBotName;
 
   if (!grouped) {
     const group = document.createElement('div');
     group.className        = 'msg-group';
+    if (m.bot_name) group.classList.add('bot-group');
     group.dataset.senderId = m.sender_id;
+    group.dataset.botName  = thisBotName;
     group.dataset.ts       = thisTsMs;
+    const botBadge = m.bot_name ? `<span class="bot-badge">BOT</span>` : '';
     group.innerHTML = `
       <div class="msg-header">
-        <span class="msg-name">${esc(m.sender_name)}</span>
+        <span class="msg-name">${esc(m.sender_name)}${botBadge}</span>
         <span class="msg-time">${formatTime(m.ts)}</span>
       </div>`;
     wrap.appendChild(group);
@@ -534,6 +547,16 @@ async function sendMessage() {
   const text = msgInput.value.trim();
   if (!text || !activeId) return;
 
+  hideSlashDropdown();
+
+  // Slash command interception
+  if (text.startsWith('/')) {
+    msgInput.value = '';
+    msgInput.style.height = 'auto';
+    await executeSlashCommand(text);
+    return;
+  }
+
   const payload = { content: text };
   if (activeType === 'channel') {
     payload.type       = 'channel_message';
@@ -545,6 +568,151 @@ async function sendMessage() {
   wsSend(payload);
   msgInput.value = '';
   msgInput.style.height = 'auto';
+}
+
+// ── Slash commands ────────────────────────────────────────────────────────────
+const SLASH_COMMANDS = [
+  { cmd: '/meet',    icon: '📹', desc: 'Create a meeting room link' },
+  { cmd: '/poll',    icon: '📊', desc: '/poll Question | Option1 | Option2' },
+  { cmd: '/roll',    icon: '🎲', desc: '/roll [max] — roll a random number' },
+  { cmd: '/coin',    icon: '🪙', desc: 'Flip a coin' },
+  { cmd: '/remind',  icon: '⏰', desc: '/remind 10m Your reminder text' },
+  { cmd: '/giphy',   icon: '🎞️', desc: '/giphy search term — post a GIF' },
+  { cmd: '/weather', icon: '🌤️', desc: '/weather city — current weather' },
+];
+
+let slashActiveIdx = 0;
+const slashDropdownEl = document.getElementById('slashDropdown');
+
+function showSlashDropdown(val) {
+  const typed  = val.toLowerCase();
+  const matches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(typed) || typed === '/');
+  if (!matches.length) { hideSlashDropdown(); return; }
+  slashActiveIdx = 0;
+  slashDropdownEl.innerHTML = '';
+  matches.forEach((c, i) => {
+    const item = document.createElement('div');
+    item.className = `slash-cmd-item${i === 0 ? ' active' : ''}`;
+    item.innerHTML = `<span class="slash-cmd-icon">${c.icon}</span>
+                      <span class="slash-cmd-name">${c.cmd}</span>
+                      <span class="slash-cmd-desc">${c.desc}</span>`;
+    item.addEventListener('mousedown', e => {
+      e.preventDefault();
+      msgInput.value = c.cmd + ' ';
+      msgInput.focus();
+      hideSlashDropdown();
+    });
+    slashDropdownEl.appendChild(item);
+  });
+  slashDropdownEl.classList.remove('hidden');
+}
+
+function hideSlashDropdown() {
+  slashDropdownEl.classList.add('hidden');
+  slashActiveIdx = 0;
+}
+
+function slashSelectDelta(delta) {
+  const items = slashDropdownEl.querySelectorAll('.slash-cmd-item');
+  if (!items.length) return;
+  items[slashActiveIdx]?.classList.remove('active');
+  slashActiveIdx = (slashActiveIdx + delta + items.length) % items.length;
+  items[slashActiveIdx]?.classList.add('active');
+  items[slashActiveIdx]?.scrollIntoView({ block: 'nearest' });
+}
+
+async function _postSyncBot(content) {
+  const body = { content, bot_name: 'SyncBot' };
+  if (activeType === 'channel') body.channel_id    = activeId;
+  else                          body.dm_to_user_id = activeId;
+  await authFetch('/chat/syncbot', 'POST', body);
+}
+
+async function executeSlashCommand(text) {
+  const parts = text.trim().split(/\s+/);
+  const cmd   = parts[0].toLowerCase();
+
+  if (cmd === '/coin') {
+    const result = Math.random() < 0.5 ? '🪙 Heads!' : '🪙 Tails!';
+    await _postSyncBot(result);
+    return;
+  }
+
+  if (cmd === '/roll') {
+    const max = parseInt(parts[1]) || 6;
+    const n   = Math.floor(Math.random() * max) + 1;
+    await _postSyncBot(`🎲 Rolled a **${n}** (1–${max})`);
+    return;
+  }
+
+  if (cmd === '/meet') {
+    const code = Math.random().toString(36).substr(2, 6).toUpperCase();
+    const url  = `${window.location.origin}/meeting.html?room=${code}`;
+    await _postSyncBot(`📹 Meeting room ready → [Join ${code}](${url})`);
+    return;
+  }
+
+  if (cmd === '/poll') {
+    // /poll Question | Option1 | Option2 | ...
+    const rest  = text.slice(6).trim();
+    const parts2 = rest.split('|').map(s => s.trim()).filter(Boolean);
+    if (parts2.length < 3) { showToast('Usage: /poll Question | Option1 | Option2'); return; }
+    const question = parts2[0];
+    const options  = parts2.slice(1);
+    const body = { question, options };
+    if (activeType === 'channel') body.channel_id    = activeId;
+    else                          body.dm_to_user_id = activeId;
+    const res = await authFetch('/chat/polls', 'POST', body);
+    if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Poll failed'); }
+    return;
+  }
+
+  if (cmd === '/remind') {
+    // /remind 10m Text or /remind 1h Text
+    const timeStr = parts[1] || '';
+    const match   = timeStr.match(/^(\d+)(m|h|s)$/i);
+    if (!match) { showToast('Usage: /remind 10m Your reminder text'); return; }
+    const [, num, unit] = match;
+    const ms = parseInt(num) * (unit.toLowerCase() === 'h' ? 3600000 : unit.toLowerCase() === 'm' ? 60000 : 1000);
+    const sendAt = new Date(Date.now() + ms).toISOString();
+    const content = parts.slice(2).join(' ') || 'Reminder!';
+    const body = { content, send_at: sendAt };
+    if (activeType === 'channel') body.channel_id    = activeId;
+    else                          body.dm_to_user_id = activeId;
+    const res = await authFetch('/chat/scheduled', 'POST', body);
+    if (!res.ok) { showToast('Reminder failed'); return; }
+    showToast(`⏰ Reminder set for ${timeStr}`);
+    return;
+  }
+
+  if (cmd === '/giphy') {
+    const query = parts.slice(1).join(' ');
+    if (!query) { showToast('Usage: /giphy search term'); return; }
+    try {
+      const r = await fetch(`https://api.giphy.com/v1/gifs/search?q=${encodeURIComponent(query)}&api_key=dc6zaTOxFJmzC&limit=1&rating=g`);
+      const d = await r.json();
+      const url = d?.data?.[0]?.images?.fixed_height?.url;
+      if (!url) { showToast('No GIF found'); return; }
+      const payload = { content: `🎞️ ${query}`, file_url: url, file_name: `${query}.gif` };
+      if (activeType === 'channel') { payload.type = 'channel_message'; payload.channel_id = activeId; }
+      else                          { payload.type = 'dm'; payload.to_user_id = activeId; }
+      wsSend(payload);
+    } catch { showToast('Giphy error'); }
+    return;
+  }
+
+  if (cmd === '/weather') {
+    const city = parts.slice(1).join('+') || 'London';
+    try {
+      const r = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=3`);
+      const text2 = await r.text();
+      if (!text2 || r.status !== 200) { showToast('Weather unavailable'); return; }
+      await _postSyncBot(`🌤️ ${text2.trim()}`);
+    } catch { showToast('Weather fetch failed'); }
+    return;
+  }
+
+  showToast(`Unknown command: ${cmd}`);
 }
 
 // ── Typing ────────────────────────────────────────────────────────────────────

@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <title>SyncDrax — Bots</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script src="js/config.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg-app:     #1a1d21;
+      --bg-sidebar: #19171d;
+      --bg-main:    #222529;
+      --bg-input:   #2a2d31;
+      --bg-hover:   #27292d;
+      --bg-active:  rgba(124,58,237,.25);
+      --purple:     #7c3aed;
+      --purple-l:   #a855f7;
+      --text:       #d1d2d3;
+      --text-muted: #828689;
+      --border:     #2f3133;
+      --radius:     8px;
+    }
+    body { font-family:'Lato',-apple-system,BlinkMacSystemFont,sans-serif;
+           background:var(--bg-app); color:var(--text);
+           height:100vh; overflow:hidden; display:flex; align-items:stretch; }
+
+    /* ── Auth gate ── */
+    #authGate { position:fixed; inset:0; background:var(--bg-app);
+                display:flex; align-items:center; justify-content:center; z-index:999; }
+    #authGate.hidden { display:none; }
+    .gate-card { background:var(--bg-sidebar); border:1px solid var(--border);
+                 border-radius:16px; padding:40px; text-align:center; max-width:360px; }
+    .gate-card h2 { font-size:1.4rem; margin-bottom:8px; }
+    .gate-card a  { color:var(--purple-l); text-decoration:none; font-weight:600; }
+
+    /* ── Layout ── */
+    .workspace { display:flex; width:100%; height:100vh; }
+
+    /* ── Sidebar ── */
+    .sidebar { width:260px; min-width:260px; background:var(--bg-sidebar);
+               display:flex; flex-direction:column; border-right:1px solid var(--border); overflow:hidden; }
+    .ws-header { padding:16px; border-bottom:1px solid var(--border); flex-shrink:0; }
+    .ws-logo   { font-size:1rem; font-weight:900; letter-spacing:.04em;
+                 display:flex; align-items:center; gap:8px; }
+    .ws-logo i { color:var(--purple-l); }
+    .sidebar-scroll { flex:1; overflow-y:auto; padding:12px 0; }
+    .sidebar-section { padding:0 8px; }
+    .section-header  { display:flex; align-items:center; justify-content:space-between;
+                       padding:6px 8px; color:var(--text-muted); font-size:.72rem;
+                       font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
+    .btn-add { background:none; border:none; color:var(--text-muted); cursor:pointer;
+               font-size:1.1rem; border-radius:4px; padding:0 4px; text-decoration:none;
+               transition:color .15s; }
+    .btn-add:hover { color:var(--text); }
+    .channel-list { list-style:none; }
+    .channel-list li a { display:block; padding:5px 10px; font-size:.88rem;
+                         color:var(--text-muted); text-decoration:none;
+                         border-radius:6px; transition:background .12s; }
+    .channel-list li a:hover { background:var(--bg-hover); color:var(--text); }
+    .channel-list li a.active { background:var(--bg-active); color:#fff; }
+    .sidebar-user { padding:12px 14px; border-top:1px solid var(--border);
+                    display:flex; align-items:center; gap:10px; flex-shrink:0; }
+    .user-avatar  { width:32px; height:32px; border-radius:8px; background:var(--purple);
+                    display:flex; align-items:center; justify-content:center;
+                    font-weight:700; font-size:.85rem; flex-shrink:0; }
+    .user-name    { font-size:.88rem; font-weight:600; }
+    .user-status  { font-size:.72rem; color:#1ba94c; }
+
+    /* ── Main content ── */
+    .bots-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+    .bots-header { padding:16px 24px; border-bottom:1px solid var(--border);
+                   display:flex; align-items:center; gap:12px; flex-shrink:0; }
+    .bots-header h1 { font-size:1.15rem; font-weight:700; }
+    .bots-body  { flex:1; overflow-y:auto; padding:28px 32px; display:flex; flex-direction:column; gap:32px; }
+
+    /* ── Cards ── */
+    .card { background:var(--bg-sidebar); border:1px solid var(--border);
+            border-radius:14px; padding:24px; }
+    .card h2 { font-size:1rem; font-weight:700; margin-bottom:18px;
+               display:flex; align-items:center; gap:8px; }
+
+    /* ── Bot list ── */
+    .bot-list { display:flex; flex-direction:column; gap:12px; }
+    .bot-item { background:var(--bg-main); border:1px solid var(--border);
+                border-radius:10px; padding:14px 16px; display:flex; align-items:center; gap:14px; }
+    .bot-avatar { font-size:1.6rem; flex-shrink:0; }
+    .bot-info   { flex:1; min-width:0; }
+    .bot-name-label { font-weight:700; font-size:.92rem; }
+    .bot-token-row  { display:flex; align-items:center; gap:8px; margin-top:6px; }
+    .bot-token      { font-size:.72rem; color:var(--text-muted); font-family:monospace;
+                      background:var(--bg-input); border:1px solid var(--border);
+                      border-radius:6px; padding:4px 8px; flex:1; overflow:hidden;
+                      text-overflow:ellipsis; white-space:nowrap; cursor:text; user-select:all; }
+    .copy-btn { background:var(--bg-active); border:1px solid var(--purple);
+                color:var(--purple-l); border-radius:6px; padding:4px 10px;
+                font-size:.75rem; cursor:pointer; font-weight:600; white-space:nowrap;
+                transition:background .15s; }
+    .copy-btn:hover { background:rgba(124,58,237,.4); }
+    .bot-url-label { font-size:.7rem; color:var(--text-muted); margin-top:4px; }
+    .del-bot-btn { background:none; border:1px solid #444; color:var(--text-muted);
+                   border-radius:6px; padding:5px 10px; cursor:pointer; font-size:.8rem;
+                   transition:all .15s; flex-shrink:0; }
+    .del-bot-btn:hover { background:rgba(220,50,50,.15); border-color:#e55; color:#e55; }
+    .empty-bots { color:var(--text-muted); font-size:.87rem; padding:8px 0; }
+
+    /* ── Create form ── */
+    .create-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .avatar-pick { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+    .av-btn { background:var(--bg-main); border:1px solid var(--border); border-radius:8px;
+              font-size:1.3rem; padding:5px 9px; cursor:pointer; transition:all .12s; }
+    .av-btn:hover { border-color:var(--purple); }
+    .av-btn.selected { border-color:var(--purple-l); background:var(--bg-active); }
+    .form-input { background:var(--bg-input); border:1px solid var(--border);
+                  border-radius:8px; padding:9px 13px; color:var(--text);
+                  font-family:inherit; font-size:.9rem; outline:none;
+                  transition:border-color .2s; width:280px; }
+    .form-input:focus { border-color:var(--purple); }
+    .create-btn { background:var(--purple); border:none; color:#fff; border-radius:8px;
+                  padding:9px 20px; font-size:.875rem; font-weight:700; cursor:pointer;
+                  transition:background .2s; }
+    .create-btn:hover { background:var(--purple-l); }
+
+    /* ── How-to ── */
+    .how-to pre { background:var(--bg-main); border:1px solid var(--border);
+                  border-radius:8px; padding:14px 16px; font-family:monospace;
+                  font-size:.78rem; color:var(--text-muted); overflow-x:auto;
+                  white-space:pre; margin-top:10px; }
+    .how-to p   { font-size:.85rem; color:var(--text-muted); margin-bottom:6px; }
+
+    /* ── Toast ── */
+    #toast { position:fixed; bottom:24px; right:24px; background:var(--bg-sidebar);
+             border:1px solid var(--border); border-radius:10px; padding:10px 18px;
+             font-size:.85rem; opacity:0; transform:translateY(8px);
+             transition:opacity .3s, transform .3s; z-index:600; pointer-events:none; }
+    #toast.show { opacity:1; transform:translateY(0); }
+  </style>
+</head>
+<body>
+
+<!-- Auth gate -->
+<div id="authGate">
+  <div class="gate-card">
+    <h2>Sign in required</h2>
+    <p style="color:var(--text-muted);margin:12px 0 20px;">You need a SyncDrax account to manage bots.</p>
+    <a href="index.html">Go to Sign In / Sign Up →</a>
+  </div>
+</div>
+
+<div class="workspace" id="workspace">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="ws-header">
+      <div class="ws-logo"><i class="fa-solid fa-bolt"></i> SyncDrax</div>
+    </div>
+    <div class="sidebar-scroll">
+      <div class="sidebar-section">
+        <div class="section-header"><span>Navigation</span></div>
+        <ul class="channel-list">
+          <li><a href="chat.html">💬 Chat Hub</a></li>
+          <li><a href="bots.html" class="active">🤖 Bots &amp; Webhooks</a></li>
+          <li><a href="meeting.html">📹 Meetings</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="sidebar-user">
+      <div class="user-avatar" id="userAvatar">?</div>
+      <div>
+        <div class="user-name" id="userNameLabel">—</div>
+        <div class="user-status">● Active</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="bots-main">
+    <div class="bots-header">
+      <span style="font-size:1.4rem;">🤖</span>
+      <h1>Bots &amp; Webhooks</h1>
+    </div>
+    <div class="bots-body">
+
+      <!-- My Bots -->
+      <div class="card">
+        <h2>🤖 My Bots</h2>
+        <div class="bot-list" id="botList">
+          <div class="empty-bots">No bots yet. Create one below!</div>
+        </div>
+      </div>
+
+      <!-- Create Bot -->
+      <div class="card">
+        <h2>➕ Create a Bot</h2>
+        <div style="margin-bottom:10px;font-size:.82rem;color:var(--text-muted);">Pick an avatar emoji:</div>
+        <div class="avatar-pick" id="avatarPick"></div>
+        <div class="create-row">
+          <input id="botNameInput" class="form-input" placeholder="Bot name (e.g. DeployBot)" maxlength="40" />
+          <button class="create-btn" onclick="createBot()">Create Bot</button>
+        </div>
+      </div>
+
+      <!-- How to use -->
+      <div class="card how-to">
+        <h2>📖 How to use webhook bots</h2>
+        <p>After creating a bot you get a unique webhook URL. POST to it from any script or CI/CD pipeline to send messages into a SyncDrax channel.</p>
+        <pre id="curlExample">curl -X POST https://your-server/bots/webhook/YOUR_TOKEN \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Build #42 passed ✅", "channel_id": 1}'</pre>
+        <p style="margin-top:12px;">The bot will appear in the channel with its name and avatar badge. <br/>
+           <code style="font-size:.77rem;background:var(--bg-input);padding:2px 6px;border-radius:4px;">channel_id</code> is optional — omit it to post to the last active channel.</p>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  const API = typeof API_BASE !== 'undefined' ? API_BASE : 'http://localhost:8000';
+
+  function getUser()  { try { return JSON.parse(localStorage.getItem('syncdrax_user')); } catch { return null; } }
+  function getToken() { return localStorage.getItem('syncdrax_token') || ''; }
+
+  const user  = getUser();
+  const token = getToken();
+
+  if (!user || !token) {
+    document.getElementById('authGate').classList.remove('hidden');
+    document.getElementById('workspace').style.display = 'none';
+  } else {
+    document.getElementById('authGate').classList.add('hidden');
+    document.getElementById('userAvatar').textContent    = (user.name || '?')[0].toUpperCase();
+    document.getElementById('userNameLabel').textContent = user.name || '?';
+    loadBots();
+    buildAvatarPicker();
+  }
+
+  async function authFetch(path, method = 'GET', body = null) {
+    const opts = {
+      method,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(API + path, opts);
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  const AVATAR_EMOJIS = ['🤖','🦾','🛸','🔧','🚀','🐧','🦊','🌟','⚡','🎯','🔥','💡'];
+  let selectedAvatar = AVATAR_EMOJIS[0];
+
+  function buildAvatarPicker() {
+    const el = document.getElementById('avatarPick');
+    AVATAR_EMOJIS.forEach(em => {
+      const btn = document.createElement('button');
+      btn.className = `av-btn${em === selectedAvatar ? ' selected' : ''}`;
+      btn.textContent = em;
+      btn.onclick = () => {
+        selectedAvatar = em;
+        el.querySelectorAll('.av-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+      };
+      el.appendChild(btn);
+    });
+  }
+
+  let myBots = [];
+
+  async function loadBots() {
+    const res = await authFetch('/bots');
+    if (!res.ok) return;
+    myBots = await res.json();
+    renderBots();
+  }
+
+  function renderBots() {
+    const el = document.getElementById('botList');
+    if (!myBots.length) {
+      el.innerHTML = '<div class="empty-bots">No bots yet. Create one below!</div>';
+      return;
+    }
+    el.innerHTML = '';
+    myBots.forEach(b => {
+      const webhookUrl = `${API}/bots/webhook/${b.webhook_token}`;
+      const item = document.createElement('div');
+      item.className = 'bot-item';
+      item.innerHTML = `
+        <div class="bot-avatar">${b.avatar}</div>
+        <div class="bot-info">
+          <div class="bot-name-label">${esc(b.name)}</div>
+          <div class="bot-token-row">
+            <span class="bot-token" title="${webhookUrl}">${webhookUrl}</span>
+            <button class="copy-btn" onclick="copyWebhook('${webhookUrl}', this)">Copy URL</button>
+          </div>
+          <div class="bot-url-label">Created ${new Date(b.created_at).toLocaleDateString()}</div>
+        </div>
+        <button class="del-bot-btn" onclick="deleteBot(${b.id})">🗑 Delete</button>`;
+      el.appendChild(item);
+    });
+  }
+
+  async function createBot() {
+    const name = document.getElementById('botNameInput').value.trim();
+    if (!name) { showToast('Enter a bot name'); return; }
+    const res = await authFetch('/bots', 'POST', { name, avatar: selectedAvatar });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Create failed'); return; }
+    const bot = await res.json();
+    myBots.push(bot);
+    renderBots();
+    document.getElementById('botNameInput').value = '';
+    showToast(`✅ Bot "${bot.name}" created!`);
+  }
+
+  async function deleteBot(id) {
+    if (!confirm('Delete this bot? Its webhook URL will stop working.')) return;
+    const res = await authFetch(`/bots/${id}`, 'DELETE');
+    if (!res.ok) { showToast('Delete failed'); return; }
+    myBots = myBots.filter(b => b.id !== id);
+    renderBots();
+    showToast('Bot deleted');
+  }
+
+  function copyWebhook(url, btn) {
+    navigator.clipboard.writeText(url).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy URL', 2000);
+    }).catch(() => showToast('Copy failed'));
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>

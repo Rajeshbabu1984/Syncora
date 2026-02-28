@@ -18,6 +18,7 @@ Endpoints:
 import json
 import logging
 import os
+import secrets
 import shutil
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -92,6 +93,7 @@ class ChatMessage(SQLModel, table=True):
     reactions:     str           = Field(default="{}")   # JSON {"😀": [uid,...]}
     pinned:        bool          = Field(default=False)
     parent_id:     Optional[int] = Field(default=None)   # thread parent id
+    bot_name:      Optional[str] = Field(default=None)   # set for bot/webhook messages
     created_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -126,6 +128,15 @@ class ScheduledMessage(SQLModel, table=True):
     created_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class Bot(SQLModel, table=True):
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    owner_id:      int
+    name:          str
+    avatar:        str           = Field(default="🤖")
+    webhook_token: str           = Field(index=True)
+    created_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 def create_db_tables():
     SQLModel.metadata.create_all(engine)
 
@@ -142,6 +153,8 @@ def migrate_db():
                 conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN pinned BOOLEAN DEFAULT FALSE'))
             if 'parent_id' not in existing:
                 conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN parent_id INTEGER DEFAULT NULL'))
+            if 'bot_name' not in existing:
+                conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN bot_name VARCHAR DEFAULT NULL'))
 
 
 def get_session():
@@ -552,6 +565,7 @@ def _msg_dict(m: ChatMessage) -> dict:
         "reactions":     json.loads(m.reactions or "{}"),
         "pinned":        bool(m.pinned),
         "parent_id":     m.parent_id,
+        "bot_name":      m.bot_name,
         "ts":            m.created_at.isoformat(),
     }
 
@@ -918,6 +932,139 @@ def get_channel_polls(
         .order_by(Poll.created_at.desc()).limit(20)
     ).all()
     return [_poll_dict(p, session) for p in polls]
+
+
+# -------------------------------------------------------------
+# SyncBot message endpoint (slash commands post result here)
+# -------------------------------------------------------------
+class SyncBotRequest(BaseModel):
+    channel_id:    Optional[int] = None
+    dm_to_user_id: Optional[int] = None
+    content:       str
+    bot_name:      str = "SyncBot"
+
+
+@app.post("/chat/syncbot", status_code=201)
+async def syncbot_message(
+    body: SyncBotRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    cm = ChatMessage(
+        channel_id=body.channel_id,
+        dm_to_user_id=body.dm_to_user_id,
+        sender_id=0,
+        sender_name=body.bot_name,
+        content=body.content.strip(),
+        bot_name=body.bot_name,
+    )
+    session.add(cm)
+    session.commit()
+    session.refresh(cm)
+    d = _msg_dict(cm)
+    if cm.channel_id:
+        await _chat_broadcast({"type": "channel_message", "message": d})
+    elif cm.dm_to_user_id:
+        await _chat_send(cm.dm_to_user_id, {"type": "dm", "message": d})
+        await _chat_send(current_user.id, {"type": "dm", "message": d})
+    return d
+
+
+# -------------------------------------------------------------
+# Bot (custom webhook bots) endpoints
+# -------------------------------------------------------------
+class CreateBotRequest(BaseModel):
+    name:   str
+    avatar: str = "🤖"
+
+
+class WebhookPayload(BaseModel):
+    content:    str
+    channel_id: Optional[int] = None
+
+
+@app.get("/bots")
+def list_bots(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    bots = session.exec(select(Bot).where(Bot.owner_id == current_user.id)).all()
+    return [
+        {
+            "id":            b.id,
+            "name":          b.name,
+            "avatar":        b.avatar,
+            "webhook_token": b.webhook_token,
+            "created_at":    b.created_at.isoformat(),
+        }
+        for b in bots
+    ]
+
+
+@app.post("/bots", status_code=201)
+def create_bot(
+    body: CreateBotRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    token = secrets.token_urlsafe(32)
+    bot = Bot(
+        owner_id=current_user.id,
+        name=body.name.strip()[:40],
+        avatar=body.avatar,
+        webhook_token=token,
+    )
+    session.add(bot)
+    session.commit()
+    session.refresh(bot)
+    return {
+        "id":            bot.id,
+        "name":          bot.name,
+        "avatar":        bot.avatar,
+        "webhook_token": bot.webhook_token,
+        "created_at":    bot.created_at.isoformat(),
+    }
+
+
+@app.delete("/bots/{bot_id}")
+def delete_bot(
+    bot_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    bot = session.get(Bot, bot_id)
+    if not bot or bot.owner_id != current_user.id:
+        raise HTTPException(404, "Bot not found")
+    session.delete(bot)
+    session.commit()
+    return {"ok": True}
+
+
+@app.post("/bots/webhook/{token}", status_code=201)
+async def bot_webhook(
+    token: str,
+    body: WebhookPayload,
+    session: Session = Depends(get_session),
+):
+    bot = session.exec(select(Bot).where(Bot.webhook_token == token)).first()
+    if not bot:
+        raise HTTPException(404, "Bot not found")
+    if not body.content.strip():
+        raise HTTPException(400, "content required")
+    cm = ChatMessage(
+        channel_id=body.channel_id,
+        sender_id=0,
+        sender_name=bot.name,
+        content=body.content.strip(),
+        bot_name=f"{bot.avatar} {bot.name}",
+    )
+    session.add(cm)
+    session.commit()
+    session.refresh(cm)
+    d = _msg_dict(cm)
+    if cm.channel_id:
+        await _chat_broadcast({"type": "channel_message", "message": d})
+    return d
 
 
 # -------------------------------------------------------------
