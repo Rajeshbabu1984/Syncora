@@ -610,8 +610,16 @@
     <div id="taskListModal"><div style="color:var(--text-muted);font-size:.85rem;">Loading…</div></div>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:flex-start;">
-      <textarea id="taskMsgInput" class="modal-input" placeholder="Message Volt will post automatically…" rows="2"
-        style="flex:1;min-width:160px;resize:vertical;font-family:inherit;padding:8px;"></textarea>
+      <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:160px;">
+        <textarea id="taskMsgInput" class="modal-input" placeholder="Message Volt will post automatically…" rows="2"
+          style="resize:vertical;font-family:inherit;padding:8px;"></textarea>
+        <input id="taskUrlInput" class="modal-input" type="url"
+          placeholder="🔗 URL to auto-open in browser (optional)"
+          style="padding:8px;" />
+        <input id="taskShellInput" class="modal-input" type="text"
+          placeholder="⚙️ Server command (e.g. start https://youtube.com or start notepad.exe)"
+          style="padding:8px;" />
+      </div>
       <div style="display:flex;flex-direction:column;gap:8px;min-width:170px;">
         <select id="taskChannelSelect" class="modal-input" style="padding:8px;"></select>
         <div style="display:flex;gap:6px;align-items:center;">

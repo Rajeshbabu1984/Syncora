@@ -145,6 +145,8 @@ class RecurringTask(SQLModel, table=True):
     interval_minutes: int                = Field(default=60)   # how often to post
     last_run:         Optional[datetime] = Field(default=None) # last time it fired
     active:           bool               = Field(default=True)
+    open_url:         Optional[str]      = Field(default=None)   # browser URL to auto-open when task fires
+    shell_cmd:        Optional[str]      = Field(default=None)   # server-side shell command to run
     created_at:       datetime           = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -166,6 +168,12 @@ def migrate_db():
                 conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN parent_id INTEGER DEFAULT NULL'))
             if 'bot_name' not in existing:
                 conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN bot_name VARCHAR DEFAULT NULL'))
+        if 'recurringtask' in tables:
+            existing = {c['name'] for c in insp.get_columns('recurringtask')}
+            if 'open_url' not in existing:
+                conn.execute(sqlalchemy.text('ALTER TABLE recurringtask ADD COLUMN open_url VARCHAR DEFAULT NULL'))
+            if 'shell_cmd' not in existing:
+                conn.execute(sqlalchemy.text('ALTER TABLE recurringtask ADD COLUMN shell_cmd VARCHAR DEFAULT NULL'))
 
 
 def get_session():
@@ -328,6 +336,14 @@ async def _run_scheduler():
                         elapsed = (now - rt.last_run.replace(tzinfo=timezone.utc)).total_seconds() / 60
                         due = elapsed >= rt.interval_minutes
                     if due:
+                        # Run optional server-side shell command
+                        if rt.shell_cmd:
+                            try:
+                                import subprocess as _sp
+                                _sp.Popen(rt.shell_cmd, shell=True,
+                                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                            except Exception as _se:
+                                log.warning("Task shell_cmd error: %s", _se)
                         cm = ChatMessage(
                             channel_id=rt.channel_id,
                             sender_id=0,
@@ -341,7 +357,10 @@ async def _run_scheduler():
                         sess.commit()
                         sess.refresh(cm)
                         if cm.channel_id:
-                            await _chat_broadcast({"type": "channel_message", "message": _msg_dict(cm)})
+                            _bcast = {"type": "channel_message", "message": _msg_dict(cm)}
+                            if rt.open_url:
+                                _bcast["open_url"] = rt.open_url
+                            await _chat_broadcast(_bcast)
         except Exception as exc:
             log.warning("Scheduler error: %s", exc)
 
@@ -616,6 +635,8 @@ def _task_dict(t: RecurringTask) -> dict:
         "interval_minutes": t.interval_minutes,
         "last_run":         t.last_run.isoformat() if t.last_run else None,
         "active":           t.active,
+        "open_url":         t.open_url,
+        "shell_cmd":        t.shell_cmd,
         "created_at":       t.created_at.isoformat(),
     }
 
@@ -1123,7 +1144,9 @@ async def bot_webhook(
 class CreateTaskRequest(BaseModel):
     channel_id:       Optional[int] = None
     message:          str
-    interval_minutes: int           = 60   # minimum 1 minute
+    interval_minutes: int           = 60          # minimum 1 minute
+    open_url:         Optional[str] = None        # auto-open in browser when task fires
+    shell_cmd:        Optional[str] = None        # server-side shell command to run
 
 
 @app.get("/tasks")
@@ -1151,6 +1174,8 @@ def create_task(
         channel_id=body.channel_id,
         message=body.message.strip(),
         interval_minutes=max(1, body.interval_minutes),
+        open_url=body.open_url or None,
+        shell_cmd=body.shell_cmd or None,
     )
     session.add(t); session.commit(); session.refresh(t)
     return _task_dict(t)

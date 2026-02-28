@@ -209,6 +209,14 @@ function handleServerMsg(msg) {
         unread[m.channel_id] = (unread[m.channel_id] || 0) + 1;
         updateUnreadBadge(m.channel_id);
       }
+      // Auto-open URL if Volt recurring task includes one
+      if (msg.open_url && m.bot_name === 'Volt') {
+        window.open(msg.open_url, '_blank', 'noopener,noreferrer');
+      }
+      // Desktop notification for Volt automated messages
+      if (m.bot_name === 'Volt') {
+        maybePushNotif('\u26a1 Volt', m.content || 'Automated message');
+      }
       break;
     }
 
@@ -1440,6 +1448,8 @@ function renderTasks() {
       <div style="flex:1;min-width:0;">
         <div style="font-size:.85rem;color:var(--text-primary);word-break:break-word;margin-bottom:3px;">${esc(t.message)}</div>
         <div style="font-size:.75rem;color:var(--text-muted);">${esc(chName)} &middot; ${interval} &middot; last: ${lastRun}</div>
+        ${t.open_url ? `<div style="font-size:.72rem;color:#7ab4f5;margin-top:2px;">&#128279; ${esc(t.open_url)}</div>` : ''}
+        ${t.shell_cmd ? `<div style="font-size:.72rem;color:#f5c97a;margin-top:2px;">&#9881; ${esc(t.shell_cmd)}</div>` : ''}
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
         <button class="modal-btn ${t.active ? 'primary' : 'secondary'}" style="padding:5px 10px;font-size:.78rem;"
@@ -1455,12 +1465,16 @@ window.createTask = async function() {
   const chanId   = parseInt(document.getElementById('taskChannelSelect').value);
   const interval = parseInt(document.getElementById('taskIntervalInput').value) || 1;
   const unit     = parseInt(document.getElementById('taskIntervalUnit').value);
+  const openUrl  = document.getElementById('taskUrlInput')?.value.trim() || null;
+  const shellCmd = document.getElementById('taskShellInput')?.value.trim() || null;
   if (!msg) { showToast('Enter a message'); return; }
   if (!chanId) { showToast('Select a channel'); return; }
   const res = await authFetch('/tasks', 'POST', {
     message: msg,
     channel_id: chanId,
     interval_minutes: interval * unit,
+    ...(openUrl  ? { open_url:  openUrl  } : {}),
+    ...(shellCmd ? { shell_cmd: shellCmd } : {}),
   });
   if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Failed to create task'); return; }
   const task = await res.json();
@@ -1469,6 +1483,8 @@ window.createTask = async function() {
   document.getElementById('taskMsgInput').value = '';
   document.getElementById('taskIntervalInput').value = '60';
   document.getElementById('taskIntervalUnit').value = '60';
+  if (document.getElementById('taskUrlInput'))   document.getElementById('taskUrlInput').value = '';
+  if (document.getElementById('taskShellInput')) document.getElementById('taskShellInput').value = '';
   showToast('✅ Recurring task created!');
 };
 
