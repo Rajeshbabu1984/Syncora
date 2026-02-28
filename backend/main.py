@@ -365,9 +365,9 @@ async def _run_scheduler():
                                 # Determine who gets the URL opened in their browser
                                 target = rt.url_target or "self"
                                 if target == "channel":
-                                    # Only allowed if task owner is the channel owner
+                                    # Allow if task owner is channel owner OR system channel
                                     ch = sess.get(Channel, rt.channel_id)
-                                    if ch and ch.created_by == rt.owner_id:
+                                    if ch and (ch.created_by == 0 or ch.created_by == rt.owner_id):
                                         _bcast["open_url"] = rt.open_url
                                         # open_url_for_uid absent → everyone
                                     else:
@@ -1042,10 +1042,10 @@ async def syncbot_message(
     # Determine actual delivery mode
     target = body.volt_target if body.volt_target in ("self", "channel") else "self"
 
-    # Only the channel owner may broadcast Volt to the whole channel
+    # Channel owner (or any user for system channels) may broadcast Volt
     if target == "channel" and body.channel_id:
         ch = session.get(Channel, body.channel_id)
-        if not ch or ch.created_by != current_user.id:
+        if not ch or (ch.created_by != 0 and ch.created_by != current_user.id):
             target = "self"  # silently downgrade
 
     if target == "channel":
@@ -1200,9 +1200,9 @@ async def bot_webhook(
         bcast = {"type": "channel_message", "message": d}
         if body.open_url:
             if body.url_target == "channel":
-                # Only allowed if bot owner is the channel owner
+                # Allow if bot owner is channel owner OR it's a system channel
                 ch = session.get(Channel, cm.channel_id)
-                if ch and ch.created_by == bot.owner_id:
+                if ch and (ch.created_by == 0 or ch.created_by == bot.owner_id):
                     bcast["open_url"] = body.open_url
                     # open_url_for_uid absent → everyone
                 else:
@@ -1247,11 +1247,11 @@ def create_task(
 ):
     if not body.message.strip():
         raise HTTPException(400, "message required")
-    # Only channel owner can set url_target="channel"
+    # Only channel owner (or any user for system channels) can set url_target="channel"
     target = body.url_target if body.url_target in ("self", "channel") else "self"
     if target == "channel" and body.channel_id:
         ch = session.get(Channel, body.channel_id)
-        if not ch or ch.created_by != current_user.id:
+        if not ch or (ch.created_by != 0 and ch.created_by != current_user.id):
             target = "self"  # silently downgrade — not the channel owner
     t = RecurringTask(
         owner_id=current_user.id,

@@ -141,17 +141,6 @@ async function initChat() {
         : '\uD83D\uDD12 Volt replies now private \u2014 only visible to you');
     });
   }
-  if (voltTargetBtn) {
-    voltTargetBtn.addEventListener('click', () => {
-      if (activeType !== 'channel') return;
-      const cur = getVoltTarget();
-      const next = cur === 'self' ? 'channel' : 'self';
-      localStorage.setItem(`volt_ch_target_${activeId}`, next);
-      _updateVoltTargetBtn();
-      showToast(next === 'channel' ? '\uD83D\uDCE2 Volt replies now visible to whole channel' : '\uD83D\uDD12 Volt replies now private (only you)');
-    });
-  }
-  document.getElementById('openBotsBtn').addEventListener('click', openBotsModal);
   document.getElementById('openBotsBtn').addEventListener('click', openBotsModal);
   document.getElementById('cancelChannelBtn').addEventListener('click', closeAddChannelModal);
   document.getElementById('createChannelBtn').addEventListener('click', createChannel);
@@ -439,11 +428,10 @@ async function openChannel(ch) {
   msgInput.placeholder   = `Message ${ch.name}`;
   messagesWrap.innerHTML = '<div style="color:var(--text-muted);font-size:.8rem;padding:20px 0;">Loading…</div>';
   renderChannelList();
-  // Show Volt target toggle only for channel owner
+  // Always show Volt toggle in channels (server enforces ownership on broadcast)
   if (voltTargetBtn) {
-    const isOwner = ch.created_by === user?.id;
-    voltTargetBtn.style.display = isOwner ? '' : 'none';
-    if (isOwner) _updateVoltTargetBtn();
+    voltTargetBtn.style.display = '';
+    _updateVoltTargetBtn();
   }
   await Promise.all([loadMessages('channel', ch.id), loadPinnedMessages(ch.id)]);
   // 1-second auto-refresh for pinned badge (instant fallback if WS misses an event)
