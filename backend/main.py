@@ -935,13 +935,13 @@ def get_channel_polls(
 
 
 # -------------------------------------------------------------
-# SyncBot message endpoint (slash commands post result here)
+# Volt message endpoint (slash commands post result here)
 # -------------------------------------------------------------
 class SyncBotRequest(BaseModel):
     channel_id:    Optional[int] = None
     dm_to_user_id: Optional[int] = None
     content:       str
-    bot_name:      str = "SyncBot"
+    bot_name:      str = "Volt"
 
 
 @app.post("/chat/syncbot", status_code=201)

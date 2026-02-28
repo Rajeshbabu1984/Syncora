@@ -637,8 +637,8 @@ function slashSelectDelta(delta) {
   items[slashActiveIdx]?.scrollIntoView({ block: 'nearest' });
 }
 
-async function _postSyncBot(content) {
-  const body = { content, bot_name: 'SyncBot' };
+async function _postVolt(content) {
+  const body = { content, bot_name: 'Volt' };
   if (activeType === 'channel') body.channel_id    = activeId;
   else                          body.dm_to_user_id = activeId;
   await authFetch('/chat/syncbot', 'POST', body);
@@ -650,21 +650,21 @@ async function executeSlashCommand(text) {
 
   if (cmd === '/coin') {
     const result = Math.random() < 0.5 ? '🪙 Heads!' : '🪙 Tails!';
-    await _postSyncBot(result);
+    await _postVolt(result);
     return;
   }
 
   if (cmd === '/roll') {
     const max = parseInt(parts[1]) || 6;
     const n   = Math.floor(Math.random() * max) + 1;
-    await _postSyncBot(`🎲 Rolled a **${n}** (1–${max})`);
+    await _postVolt(`🎲 Rolled a **${n}** (1–${max})`);
     return;
   }
 
   if (cmd === '/meet') {
     const code = Math.random().toString(36).substr(2, 6).toUpperCase();
     const url  = `${window.location.origin}/meeting.html?room=${code}`;
-    await _postSyncBot(`📹 Meeting room ready → [Join ${code}](${url})`);
+    await _postVolt(`📹 Meeting room ready → [Join ${code}](${url})`)
     return;
   }
 
@@ -723,7 +723,7 @@ async function executeSlashCommand(text) {
       const r = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=3`);
       const text2 = await r.text();
       if (!text2 || r.status !== 200) { showToast('Weather unavailable'); return; }
-      await _postSyncBot(`🌤️ ${text2.trim()}`);
+      await _postVolt(`🌤️ ${text2.trim()}`);
     } catch { showToast('Weather fetch failed'); }
     return;
   }
