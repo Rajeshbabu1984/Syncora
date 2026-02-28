@@ -57,6 +57,7 @@ let allUsers      = [];      // [{id, name}] from /chat/users
 let threadParentId   = null;
 let threadParentData = null;
 let searchTimeout    = null;
+let _pinnedPollTimer = null;  // auto-refresh pinned badge every 5s
 
 const CHANNEL_EMOJIS = [
   '💬','📣','🔥','🎉','🛠️','📢','🌍','🎵','🚀','💡','🎯','🧠',
@@ -307,8 +308,8 @@ function handleServerMsg(msg) {
         if (btn) { btn.title = msg.pinned ? 'Unpin' : 'Pin'; btn.style.color = msg.pinned ? 'var(--purple-l)' : ''; }
         if (msg.pinned) msgEl.dataset.pinned = '1'; else delete msgEl.dataset.pinned;
       }
-      // Reload pinned bar for all users (handles remote pin/unpin; local already handled optimistically)
-      if (activeType === 'channel') loadPinnedMessages(activeId);
+      // Always reload pinned bar — covers remote pin/unpin for all users
+      if (activeType === 'channel' && activeId) loadPinnedMessages(activeId);
       break;
     }
 
@@ -406,6 +407,12 @@ async function openChannel(ch) {
   messagesWrap.innerHTML = '<div style="color:var(--text-muted);font-size:.8rem;padding:20px 0;">Loading…</div>';
   renderChannelList();
   await Promise.all([loadMessages('channel', ch.id), loadPinnedMessages(ch.id)]);
+  // Start 5-second auto-refresh for pinned badge (reliable even if WS misses an event)
+  clearInterval(_pinnedPollTimer);
+  _pinnedPollTimer = setInterval(() => {
+    if (activeType === 'channel' && activeId === ch.id) loadPinnedMessages(ch.id);
+    else clearInterval(_pinnedPollTimer);
+  }, 5000);
 }
 
 // ── DMs ───────────────────────────────────────────────────────────────────────
@@ -444,6 +451,14 @@ async function openDm(uid, name) {
   msgInput.placeholder   = `Message ${name}`;
   messagesWrap.innerHTML = '<div style="color:var(--text-muted);font-size:.8rem;padding:20px 0;">Loading…</div>';
   renderDmList();
+  // Stop pinned poll and hide pinned bar (DMs don't have pinned)
+  clearInterval(_pinnedPollTimer);
+  _pinnedPollTimer = null;
+  const badge = document.getElementById('pinnedBadge');
+  const bar   = document.getElementById('pinnedBar');
+  badge.classList.add('hidden');
+  bar.classList.add('hidden');
+  bar.innerHTML = '';
   await loadMessages('dm', uid);
   // Notify sender that messages were read
   wsSend({ type: 'mark_dm_read', to_user_id: uid });
@@ -964,11 +979,12 @@ async function loadPinnedMessages(channelId) {
   const bar   = document.getElementById('pinnedBar');
   if (!msgs.length) {
     badge.classList.add('hidden');
+    badge.textContent = '';
     bar.classList.add('hidden');
     bar.innerHTML = '';
     return;
   }
-  badge.textContent = `📌 ${msgs.length} pinned`;
+  badge.textContent = `\uD83D\uDCCC ${msgs.length} pinned`;
   badge.classList.remove('hidden');
   // Keep bar visibility state but update content
   renderPinnedBar(msgs);
