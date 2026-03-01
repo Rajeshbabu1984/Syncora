@@ -576,7 +576,7 @@ function appendMessage(m, initial) {
   const canPin = activeType === 'dm' || !activeChannel || activeChannel.created_by === 0 || activeChannel.created_by === user.id;
 
   const isSender = m.sender_id === user.id;
-  const canDelete = isSender || (m.bot_name && canPin); // channel owners can delete bot messages
+  const canDelete = isSender || m.bot_name; // anyone can delete bot messages
   if (isSender) bubble.dataset.senderSelf = '1';
 
   // Ephemeral messages have no DB id — skip interactive actions
