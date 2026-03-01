@@ -64,11 +64,16 @@ let typingTimers  = {};      // channel/dm → timer
 let emojiTarget   = null;    // 'input' or message_id for reaction
 let pendingEmoji  = '💬';   // selected channel emoji
 let unread        = {};      // { cid: count }
-let allUsers      = [];      // [{id, name}] from /chat/users
+let allUsers      = [];      // [{id, name, avatar_url, status}] from /chat/users
 let threadParentId   = null;
 let threadParentData = null;
 let searchTimeout    = null;
 let _pinnedPollTimer = null;  // auto-refresh pinned badge every 5s
+let categories       = [];    // [{id, name, position}]
+let pendingForwardId = null;  // message id to forward
+let mentionUsers     = [];    // filtered mention candidates
+let mentionActiveIdx = 0;
+let myProfile        = null;  // {id, name, avatar_url, status, bio}
 
 const CHANNEL_EMOJIS = [
   '💬','📣','🔥','🎉','🛠️','📢','🌍','🎵','🚀','💡','🎯','🧠',
@@ -94,6 +99,8 @@ async function initChat() {
 
   await loadChannels();
   await loadUsers();
+  loadCategories();
+  loadMyProfile();
   connectWS();
 
   // Auto-open first channel
@@ -102,24 +109,31 @@ async function initChat() {
   // Event listeners
   sendBtn.addEventListener('click', sendMessage);
   msgInput.addEventListener('keydown', e => {
-    const dropdownOpen = !slashDropdownEl.classList.contains('hidden');
+    const slashOpen   = !slashDropdownEl.classList.contains('hidden');
+    const mentionOpen = !document.getElementById('mentionDropdown').classList.contains('hidden');
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (dropdownOpen) {
-        // Select active item — fill command into input, keep focus
+      if (mentionOpen) { completeMention(mentionUsers[mentionActiveIdx]?.name || ''); return; }
+      if (slashOpen) {
         const active = slashDropdownEl.querySelector('.slash-cmd-item.active');
         if (active) {
           const cmdName = active.querySelector('.slash-cmd-name').textContent;
           msgInput.value = cmdName + ' ';
-          msgInput.dispatchEvent(new Event('input'));  // re-filter dropdown
+          msgInput.dispatchEvent(new Event('input'));
         }
-        return;  // don't send yet
+        return;
       }
       sendMessage();
     }
-    if (e.key === 'Escape') hideSlashDropdown();
-    if (e.key === 'ArrowDown') { if (dropdownOpen) { slashSelectDelta(1); e.preventDefault(); } }
-    if (e.key === 'ArrowUp')   { if (dropdownOpen) { slashSelectDelta(-1); e.preventDefault(); } }
+    if (e.key === 'Escape') { hideSlashDropdown(); hideMentionDropdown(); }
+    if (e.key === 'ArrowDown') {
+      if (mentionOpen) { mentionActiveIdx = Math.min(mentionActiveIdx + 1, mentionUsers.length - 1); renderMentionDropdown(); e.preventDefault(); }
+      else if (slashOpen) { slashSelectDelta(1); e.preventDefault(); }
+    }
+    if (e.key === 'ArrowUp') {
+      if (mentionOpen) { mentionActiveIdx = Math.max(mentionActiveIdx - 1, 0); renderMentionDropdown(); e.preventDefault(); }
+      else if (slashOpen) { slashSelectDelta(-1); e.preventDefault(); }
+    }
     sendTyping();
   });
   msgInput.addEventListener('input', () => {
@@ -192,15 +206,27 @@ async function initChat() {
   // Pinned bar toggle
   document.getElementById('pinnedBadge').addEventListener('click', togglePinnedBar);
 
-  // Auto-resize textarea
+  // Auto-resize textarea + @mention detection
   msgInput.addEventListener('input', () => {
     msgInput.style.height = 'auto';
     msgInput.style.height = Math.min(msgInput.scrollHeight, 140) + 'px';
+    handleMentionInput();
   });
 
   // New features
   initPushNotifications();
   initPollHandlers();
+  initProfileHandlers();
+  initBookmarksHandlers();
+  initInviteHandlers();
+  initForwardHandlers();
+  initCategoryHandlers();
+
+  // @mention dropdown keyboard nav
+  document.getElementById('mentionDropdown').addEventListener('mousedown', e => {
+    const item = e.target.closest('.mention-item');
+    if (item) { e.preventDefault(); completeMention(item.dataset.name); }
+  });
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -420,6 +446,39 @@ function handleServerMsg(msg) {
       }
       break;
     }
+
+    case 'message_edit': {
+      const m = msg.message;
+      const bubble = messagesWrap.querySelector(`[data-msg-id="${m.id}"]`);
+      if (bubble) {
+        // Update text span
+        const textEl = bubble.querySelector('.msg-text');
+        if (textEl) textEl.innerHTML = renderMentions(esc(m.content));
+        // Add/update edited label
+        let editedEl = bubble.querySelector('.edited-label');
+        if (!editedEl) {
+          editedEl = document.createElement('span');
+          editedEl.className = 'edited-label';
+          const textSpan = bubble.querySelector('.msg-text');
+          if (textSpan) textSpan.after(editedEl);
+        }
+        editedEl.textContent = '(edited)';
+        bubble.dataset.msgContent = m.content;
+      }
+      break;
+    }
+
+    case 'user_status': {
+      // Update DM list entry
+      const uid = msg.user_id;
+      if (dmUsers[uid]) {
+        if (msg.name)       dmUsers[uid].name       = msg.name;
+        if (msg.status !== undefined) dmUsers[uid].status    = msg.status;
+        if (msg.avatar_url !== undefined) dmUsers[uid].avatar_url = msg.avatar_url;
+        renderDmList();
+      }
+      break;
+    }
   }
 }
 
@@ -431,24 +490,7 @@ async function loadChannels() {
   renderChannelList();
 }
 
-function renderChannelList() {
-  channelListEl.innerHTML = '';
-  channels.forEach(ch => {
-    const li = document.createElement('li');
-    li.className = `ch-item${activeType === 'channel' && activeId === ch.id ? ' active' : ''}`;
-    li.dataset.id = ch.id;
-    const isOwner = ch.created_by !== 0 && ch.created_by === user.id;
-    const delBtn  = isOwner
-      ? `<button class="ch-del-btn" onclick="deleteChannel(event,${ch.id})" title="Delete channel">✕</button>`
-      : '';
-    li.innerHTML = `<span class="ch-name">${esc(ch.name)}</span>${delBtn}`;
-    if (unread[ch.id]) {
-      li.innerHTML += `<span class="ch-badge">${unread[ch.id]}</span>`;
-    }
-    li.addEventListener('click', () => openChannel(ch));
-    channelListEl.appendChild(li);
-  });
-}
+// renderChannelList is defined later (with category support)
 
 async function openChannel(ch) {
   activeType  = 'channel';
@@ -460,6 +502,9 @@ async function openChannel(ch) {
   msgInput.placeholder   = `Message ${ch.name}`;
   messagesWrap.innerHTML = '<div style="color:var(--text-muted);font-size:.8rem;padding:20px 0;">Loading…</div>';
   renderChannelList();
+  // Show invite button for channel owners or system channels
+  const inviteBtn = document.getElementById('inviteBtn');
+  if (inviteBtn) inviteBtn.style.display = '';
   // Always show Volt toggle in channels (server enforces ownership on broadcast)
   if (voltTargetBtn) {
     voltTargetBtn.style.display = '';
@@ -480,7 +525,9 @@ async function loadUsers() {
   const res = await authFetch('/chat/users');
   if (!res.ok) return;
   allUsers = await res.json();
-  allUsers.forEach(u => { dmUsers[u.id] = { name: u.name, online: false }; });
+  allUsers.forEach(u => {
+    dmUsers[u.id] = { name: u.name, online: false, avatar_url: u.avatar_url, status: u.status };
+  });
   renderDmList();
 }
 
@@ -493,9 +540,13 @@ function renderDmList() {
     li.dataset.uid = uid;
     const initial = info.name.charAt(0).toUpperCase();
     const badge   = unread[`dm_${uid}`] ? `<span class="ch-badge">${unread[`dm_${uid}`]}</span>` : '';
+    const statusText = info.status ? `<span style="font-size:.65rem;color:var(--text-muted);margin-left:4px;">${esc(info.status)}</span>` : '';
+    const avatarInner = info.avatar_url
+      ? `<img class="dm-avatar-img" src="${API + info.avatar_url}" alt="" />`
+      : initial;
     li.innerHTML = `
-      <div class="dm-avatar">${initial}<span class="dm-dot${info.online ? ' online' : ''}"></span></div>
-      <span class="ch-name">${esc(info.name)}</span>${badge}`;
+      <div class="dm-avatar">${avatarInner}<span class="dm-dot${info.online ? ' online' : ''}"></span></div>
+      <span class="ch-name">${esc(info.name)}</span>${statusText}${badge}`;
     li.addEventListener('click', () => openDm(numId, info.name));
     dmListEl.appendChild(li);
   });
@@ -573,9 +624,19 @@ function appendMessage(m, initial) {
     group.dataset.ts       = thisTsMs;
     const botBadge = m.bot_name ? `<span class="bot-badge">BOT</span>` : '';
     const ephemeralNote = m.ephemeral ? `<span style="font-size:.7rem;color:var(--text-muted);margin-left:6px;font-style:italic;">\uD83D\uDC41\uFE0F Only visible to you</span>` : '';
+    // Avatar
+    const senderUser = allUsers.find(u => u.id === m.sender_id) || {};
+    const senderInitial = (m.sender_name || '?').charAt(0).toUpperCase();
+    const avatarHtml = senderUser.avatar_url
+      ? `<div class="msg-sender-avatar"><img src="${API + senderUser.avatar_url}" alt="" /></div>`
+      : `<div class="msg-sender-avatar" style="background:var(--purple);">${senderInitial}</div>`;
+    const nameClickable = !m.bot_name
+      ? `<span class="msg-name" style="cursor:pointer;" onclick="openProfileModal(${m.sender_id})">${esc(m.sender_name)}${botBadge}${ephemeralNote}</span>`
+      : `<span class="msg-name">${esc(m.sender_name)}${botBadge}${ephemeralNote}</span>`;
     group.innerHTML = `
-      <div class="msg-header">
-        <span class="msg-name">${esc(m.sender_name)}${botBadge}${ephemeralNote}</span>
+      <div class="msg-header" style="display:flex;align-items:center;gap:8px;">
+        ${avatarHtml}
+        ${nameClickable}
         <span class="msg-time">${formatTime(m.ts)}</span>
       </div>`;
     wrap.appendChild(group);
@@ -594,7 +655,9 @@ function appendMessage(m, initial) {
   if (m.parent_id) bubble.dataset.parentId = m.parent_id;
 
   let inner = '';
-  if (m.content) inner += `<span class="msg-text">${esc(m.content)}</span>`;
+  if (m.forwarded_from) inner += `<span class="forwarded-label"><i class="fa-solid fa-share"></i> Forwarded</span>`;
+  if (m.content) inner += `<span class="msg-text">${renderMentions(esc(m.content))}</span>`;
+  if (m.edited)  inner += `<span class="edited-label">(edited)</span>`;
   if (m.file_url) {
     const fullUrl   = API + m.file_url;
     const isImage   = /\.(png|jpg|jpeg|gif|webp)$/i.test(m.file_url);
@@ -618,6 +681,9 @@ function appendMessage(m, initial) {
     <button class="react-btn" onclick="openReactionPicker(event,${m.id})" title="React">😊</button>
     ${canPin ? `<button class="react-btn pin-msg-btn" onclick="togglePin(${m.id})" title="${m.pinned ? 'Unpin' : 'Pin'}"${m.pinned ? ' style="color:var(--purple-l)"' : ''}>📌</button>` : ''}
     <button class="react-btn" onclick="openThreadById(${m.id})" title="Reply in thread">🧵</button>
+    <button class="react-btn" onclick="bookmarkMessage(${m.id})" title="Bookmark">🔖</button>
+    <button class="react-btn" onclick="openForwardModal(${m.id})" title="Forward">↪️</button>
+    ${isSender && !m.bot_name ? `<button class="react-btn" onclick="startEditMessage(${m.id})" title="Edit">✏️</button>` : ''}
     ${canDelete ? `<button class="react-btn del-msg-btn" onclick="deleteMessage(${m.id})" title="Delete message">🗑️</button>` : ''}
     ${(activeChannel && activeChannel.created_by === user.id && !isSender && !m.bot_name) ? `<button class="mod-btn" onclick="kickUser(${m.sender_id},${m.channel_id})" title="Kick from channel">🥢</button><button class="mod-btn" onclick="muteUser(${m.sender_id},${m.channel_id})" title="Mute in channel">🔇</button>` : ''}
   </span>`;
@@ -1028,6 +1094,459 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Render @mentions as highlighted spans
+function renderMentions(escapedText) {
+  return escapedText.replace(/@([\w\d_\- ]{1,32})/g, (match, name) => {
+    const isMe = user.name.toLowerCase() === name.toLowerCase();
+    return `<span class="mention${isMe ? ' mention-me' : ''}">${match}</span>`;
+  });
+}
+
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type === 'error' ? ' error' : '');
+  setTimeout(() => { t.classList.remove('show'); }, 3000);
+}
+
+// ── @Mention autocomplete ─────────────────────────────────────────────────────
+function handleMentionInput() {
+  const val = msgInput.value;
+  const cursorPos = msgInput.selectionStart;
+  // Find the last @ before cursor
+  const textBeforeCursor = val.substring(0, cursorPos);
+  const atMatch = textBeforeCursor.match(/@([\w\d_\- ]*)$/);
+  if (!atMatch) { hideMentionDropdown(); return; }
+  const query = atMatch[1].toLowerCase();
+  mentionUsers = allUsers.filter(u => u.name.toLowerCase().startsWith(query)).slice(0, 8);
+  if (!mentionUsers.length) { hideMentionDropdown(); return; }
+  mentionActiveIdx = 0;
+  renderMentionDropdown();
+}
+
+function renderMentionDropdown() {
+  const el = document.getElementById('mentionDropdown');
+  if (!mentionUsers.length) { el.classList.add('hidden'); return; }
+  el.innerHTML = mentionUsers.map((u, i) => {
+    const av = u.avatar_url
+      ? `<div class="mention-avatar"><img src="${API + u.avatar_url}" alt="" /></div>`
+      : `<div class="mention-avatar">${u.name.charAt(0).toUpperCase()}</div>`;
+    const statusText = u.status ? `<span class="mention-status">${esc(u.status)}</span>` : '';
+    return `<div class="mention-item${i === mentionActiveIdx ? ' active' : ''}" data-name="${esc(u.name)}">${av}<span class="mention-name">@${esc(u.name)}</span>${statusText}</div>`;
+  }).join('');
+  el.classList.remove('hidden');
+}
+
+function hideMentionDropdown() {
+  document.getElementById('mentionDropdown').classList.add('hidden');
+  mentionUsers = [];
+}
+
+function completeMention(name) {
+  if (!name) { hideMentionDropdown(); return; }
+  const val = msgInput.value;
+  const cursorPos = msgInput.selectionStart;
+  const textBeforeCursor = val.substring(0, cursorPos);
+  const replaced = textBeforeCursor.replace(/@([\w\d_\- ]*)$/, `@${name} `);
+  msgInput.value = replaced + val.substring(cursorPos);
+  msgInput.dispatchEvent(new Event('input'));
+  hideMentionDropdown();
+  msgInput.focus();
+}
+
+// ── Channel categories ────────────────────────────────────────────────────────
+async function loadCategories() {
+  const res = await authFetch('/channels/categories');
+  if (!res.ok) return;
+  categories = await res.json();
+  renderChannelList();
+}
+
+function renderChannelList() {
+  channelListEl.innerHTML = '';
+  // Group channels by category
+  const uncategorized = channels.filter(c => !c.category_id);
+  const byCat = {};
+  channels.filter(c => c.category_id).forEach(c => {
+    (byCat[c.category_id] = byCat[c.category_id] || []).push(c);
+  });
+
+  // Render categories first
+  categories.forEach(cat => {
+    const catChannels = byCat[cat.id] || [];
+    const headerLi = document.createElement('li');
+    headerLi.className = 'category-header';
+    headerLi.dataset.catId = cat.id;
+    headerLi.innerHTML = `<span class="category-arrow">▾</span>${esc(cat.name)}`;
+    headerLi.addEventListener('click', () => {
+      const arrow = headerLi.querySelector('.category-arrow');
+      const nextUl = headerLi.nextElementSibling;
+      if (nextUl && nextUl.classList.contains('category-channels')) {
+        nextUl.classList.toggle('collapsed');
+        arrow.classList.toggle('collapsed');
+      }
+    });
+    channelListEl.appendChild(headerLi);
+    const catUl = document.createElement('ul');
+    catUl.className = 'category-channels channel-list';
+    catUl.style.listStyle = 'none';
+    catChannels.forEach(ch => channelListEl.appendChild(_buildChannelLi(ch)));
+    // append to outer list for simplicity
+  });
+
+  // Render uncategorized channels
+  uncategorized.forEach(ch => channelListEl.appendChild(_buildChannelLi(ch)));
+}
+
+function _buildChannelLi(ch) {
+  const li = document.createElement('li');
+  li.className = `ch-item${activeType === 'channel' && activeId === ch.id ? ' active' : ''}`;
+  li.innerHTML = `<span class="ch-prefix">${ch.name.charAt(0) === '#' ? '' : '#'}</span><span class="ch-name">${esc(ch.name)}</span>`;
+  if (ch.created_by === user.id) {
+    li.innerHTML += `<button class="ch-del-btn" onclick="deleteChannel(event,${ch.id});" title="Delete">✕</button>`;
+  }
+  if (unread[ch.id]) {
+    li.innerHTML += `<span class="ch-badge">${unread[ch.id]}</span>`;
+  }
+  li.addEventListener('click', () => openChannel(ch));
+  return li;
+}
+
+function initCategoryHandlers() {
+  // Add manage-categories entry to channels section
+  const addCatBtn = document.getElementById('addChannelBtn');
+  if (addCatBtn) {
+    // Add long-hold or second button — for simplicity expose via slash command / category modal trigger
+  }
+  document.getElementById('addCategoryBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('newCategoryInput').value.trim();
+    if (!name) return;
+    const res = await authFetch('/channels/categories', 'POST', { name });
+    if (res.ok) {
+      document.getElementById('newCategoryInput').value = '';
+      categories = [...categories, await res.json()];
+      renderCategoryList();
+      renderChannelList();
+    } else showToast('Failed to create category', 'error');
+  });
+  document.getElementById('closeCategoryBtn')?.addEventListener('click', () =>
+    document.getElementById('categoryOverlay').classList.add('hidden'));
+}
+
+function renderCategoryList() {
+  const el = document.getElementById('categoryList');
+  if (!el) return;
+  if (!categories.length) { el.innerHTML = '<em style="color:var(--text-muted);font-size:.82rem">No categories yet.</em>'; return; }
+  el.innerHTML = categories.map(c => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--border);">
+      <span style="font-size:.88rem;">${esc(c.name)}</span>
+      <button class="modal-btn secondary" style="font-size:.75rem;padding:4px 10px;" onclick="deleteCategory(${c.id})">Delete</button>
+    </div>`).join('');
+}
+
+window.deleteCategory = async function(id) {
+  if (!confirm('Delete this category?')) return;
+  const res = await authFetch(`/channels/categories/${id}`, 'DELETE');
+  if (res.ok) {
+    categories = categories.filter(c => c.id !== id);
+    renderCategoryList(); renderChannelList();
+  } else showToast('Delete failed', 'error');
+};
+
+// ── User profiles ─────────────────────────────────────────────────────────────
+async function loadMyProfile() {
+  const res = await authFetch('/users/me/profile');
+  if (!res.ok) return;
+  myProfile = await res.json();
+  // Update sidebar avatar
+  if (myProfile.avatar_url) {
+    userAvatar.innerHTML = `<img class="avatar-img" src="${API + myProfile.avatar_url}" alt="" />`;
+  }
+  if (myProfile.status) {
+    const statusEl = document.getElementById('myStatusLabel');
+    if (statusEl) statusEl.textContent = '● ' + myProfile.status;
+  }
+}
+
+function initProfileHandlers() {
+  // Click sidebar user area to edit profile
+  document.getElementById('sidebarUser')?.addEventListener('click', openMyProfileModal);
+  // Profile modal close
+  document.getElementById('closeProfileBtn')?.addEventListener('click', () =>
+    document.getElementById('profileOverlay').classList.add('hidden'));
+  document.getElementById('profileOverlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
+  });
+  // DM from profile
+  document.getElementById('profileDmBtn')?.addEventListener('click', () => {
+    const uid  = parseInt(document.getElementById('profileDmBtn').dataset.uid);
+    const name = document.getElementById('profileName').textContent;
+    document.getElementById('profileOverlay').classList.add('hidden');
+    openDm(uid, name);
+  });
+  // My profile modal
+  document.getElementById('cancelMyProfileBtn')?.addEventListener('click', () =>
+    document.getElementById('myProfileOverlay').classList.add('hidden'));
+  document.getElementById('myProfileOverlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
+  });
+  document.getElementById('saveMyProfileBtn')?.addEventListener('click', saveMyProfile);
+  document.getElementById('avatarFileInput')?.addEventListener('change', uploadMyAvatar);
+}
+
+async function openProfileModal(userId) {
+  const overlay = document.getElementById('profileOverlay');
+  overlay.classList.remove('hidden');
+  document.getElementById('profileAvatar').textContent = '…';
+  document.getElementById('profileName').textContent   = '';
+  document.getElementById('profileStatus').textContent  = '';
+  document.getElementById('profileBio').textContent     = '';
+  document.getElementById('profileJoined').textContent  = '';
+  try {
+    const res  = await authFetch(`/users/${userId}/profile`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    const avEl = document.getElementById('profileAvatar');
+    if (data.avatar_url) {
+      avEl.innerHTML = `<img src="${API + data.avatar_url}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`;
+    } else {
+      avEl.textContent = data.name.charAt(0).toUpperCase();
+    }
+    document.getElementById('profileName').textContent   = data.name;
+    document.getElementById('profileStatus').textContent  = data.status || '';
+    document.getElementById('profileBio').textContent     = data.bio || '';
+    document.getElementById('profileJoined').textContent  = 'Joined ' + new Date(data.joined).toLocaleDateString();
+    document.getElementById('profileDmBtn').dataset.uid = userId;
+  } catch { document.getElementById('profileName').textContent = 'Could not load profile'; }
+}
+
+function openMyProfileModal() {
+  if (!myProfile) return;
+  const overlay = document.getElementById('myProfileOverlay');
+  overlay.classList.remove('hidden');
+  document.getElementById('profileNameInput').value   = myProfile.name    || '';
+  document.getElementById('profileStatusInput').value = myProfile.status  || '';
+  document.getElementById('profileBioInput').value    = myProfile.bio     || '';
+  const avEl = document.getElementById('myProfileAvatar');
+  if (myProfile.avatar_url) {
+    avEl.innerHTML = `<img src="${API + myProfile.avatar_url}" alt="" style="width:100%;height:100%;object-fit:cover;" />`;
+  } else {
+    avEl.textContent = myProfile.name.charAt(0).toUpperCase();
+  }
+}
+
+async function saveMyProfile() {
+  const name   = document.getElementById('profileNameInput').value.trim();
+  const status = document.getElementById('profileStatusInput').value.trim();
+  const bio    = document.getElementById('profileBioInput').value.trim();
+  const res = await authFetch('/users/me/profile', 'PATCH', { name: name || undefined, status, bio });
+  if (res.ok) {
+    myProfile = await res.json();
+    userNameLabel.textContent = myProfile.name;
+    const statusEl = document.getElementById('myStatusLabel');
+    if (statusEl) statusEl.textContent = myProfile.status ? '● ' + myProfile.status : '● Active';
+    // Update stored user name
+    const stored = JSON.parse(localStorage.getItem('synctact_user') || '{}');
+    stored.name = myProfile.name;
+    localStorage.setItem('synctact_user', JSON.stringify(stored));
+    document.getElementById('myProfileOverlay').classList.add('hidden');
+    showToast('Profile updated ✓');
+  } else showToast('Update failed', 'error');
+}
+
+async function uploadMyAvatar() {
+  const file = document.getElementById('avatarFileInput').files?.[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${API}/users/me/avatar`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  if (res.ok) {
+    const data = await res.json();
+    myProfile.avatar_url = data.avatar_url;
+    userAvatar.innerHTML = `<img class="avatar-img" src="${API + data.avatar_url}?t=${Date.now()}" alt="" />`;
+    const avEl = document.getElementById('myProfileAvatar');
+    avEl.innerHTML = `<img src="${API + data.avatar_url}?t=${Date.now()}" alt="" style="width:100%;height:100%;object-fit:cover;" />`;
+    showToast('Avatar updated ✓');
+  } else showToast('Upload failed', 'error');
+}
+
+// ── Bookmarks ─────────────────────────────────────────────────────────────────
+function initBookmarksHandlers() {
+  document.getElementById('openBookmarksBtn')?.addEventListener('click', toggleBookmarksPanel);
+  document.getElementById('closeBookmarksBtn')?.addEventListener('click', () =>
+    document.getElementById('bookmarksPanel').classList.remove('open'));
+}
+
+function toggleBookmarksPanel() {
+  const panel = document.getElementById('bookmarksPanel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) loadBookmarks();
+}
+
+async function bookmarkMessage(msgId) {
+  const res = await authFetch(`/bookmarks/${msgId}`, 'POST');
+  if (res.ok) showToast('Bookmarked 🔖');
+  else showToast('Already bookmarked', 'error');
+}
+
+async function loadBookmarks() {
+  const el = document.getElementById('bookmarksList');
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:10px;">Loading…</div>';
+  const res = await authFetch('/bookmarks');
+  if (!res.ok) { el.innerHTML = '<div style="color:#f87171;font-size:.82rem;padding:10px;">Failed to load.</div>'; return; }
+  const bms = await res.json();
+  if (!bms.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:10px;">No bookmarks yet.</div>'; return; }
+  el.innerHTML = bms.map(m => `
+    <div class="bookmark-item">
+      <div class="bki-name">${esc(m.sender_name)} · <span style="font-size:.72rem;">${new Date(m.ts).toLocaleDateString()}</span>
+        <button class="bki-del" onclick="removeBookmark(${m.id}, this.closest('.bookmark-item'))" title="Remove">\u00d7</button>
+      </div>
+      <div class="bki-text">${renderMentions(esc(m.content || '')) || '<em style="color:var(--text-muted)">File attachment</em>'}</div>
+    </div>`).join('');
+}
+
+window.removeBookmark = async function(msgId, el) {
+  await authFetch(`/bookmarks/${msgId}`, 'DELETE');
+  el?.remove();
+};
+
+// ── Invite links ──────────────────────────────────────────────────────────────
+function initInviteHandlers() {
+  document.getElementById('inviteBtn')?.addEventListener('click', () => {
+    if (activeType !== 'channel') return;
+    const ch = channels.find(c => c.id === activeId);
+    document.getElementById('inviteChannelName').textContent = ch?.name || '';
+    document.getElementById('inviteOverlay').classList.remove('hidden');
+    document.getElementById('inviteCopyWrap').classList.add('hidden');
+    document.getElementById('inviteExpiry').value   = '';
+    document.getElementById('inviteMaxUses').value  = '';
+  });
+  document.getElementById('cancelInviteBtn')?.addEventListener('click', () =>
+    document.getElementById('inviteOverlay').classList.add('hidden'));
+  document.getElementById('inviteOverlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
+  });
+  document.getElementById('generateInviteBtn')?.addEventListener('click', generateInvite);
+  document.getElementById('copyInviteBtn')?.addEventListener('click', () => {
+    const input = document.getElementById('inviteLinkInput');
+    navigator.clipboard.writeText(input.value).then(() => showToast('Copied! 📋'));
+  });
+}
+
+async function generateInvite() {
+  const expiry  = document.getElementById('inviteExpiry').value;
+  const maxUses = parseInt(document.getElementById('inviteMaxUses').value) || null;
+  const body    = { channel_id: activeId };
+  if (expiry)   body.expires_hours = parseInt(expiry);
+  if (maxUses)  body.max_uses = maxUses;
+  const res = await authFetch('/invite', 'POST', body);
+  if (!res.ok) { showToast('Failed to generate invite', 'error'); return; }
+  const data = await res.json();
+  const inviteUrl = `${window.location.origin}/chat.html?invite=${data.code}`;
+  document.getElementById('inviteLinkInput').value = inviteUrl;
+  document.getElementById('inviteCopyWrap').classList.remove('hidden');
+}
+
+// ── Forward message ───────────────────────────────────────────────────────────
+function initForwardHandlers() {
+  document.getElementById('cancelForwardBtn')?.addEventListener('click', () => {
+    document.getElementById('forwardOverlay').classList.add('hidden');
+    pendingForwardId = null;
+  });
+  document.getElementById('forwardOverlay')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) { e.currentTarget.classList.add('hidden'); pendingForwardId = null; }
+  });
+  document.getElementById('confirmForwardBtn')?.addEventListener('click', async () => {
+    if (!pendingForwardId) return;
+    const cid = parseInt(document.getElementById('forwardChannelSelect').value);
+    if (!cid) { showToast('Select a channel', 'error'); return; }
+    const res = await authFetch(`/chat/messages/${pendingForwardId}/forward`, 'POST', { channel_id: cid });
+    if (res.ok) { showToast('Message forwarded ↪️'); document.getElementById('forwardOverlay').classList.add('hidden'); pendingForwardId = null; }
+    else showToast('Forward failed', 'error');
+  });
+}
+
+function openForwardModal(msgId) {
+  pendingForwardId = msgId;
+  const sel = document.getElementById('forwardChannelSelect');
+  sel.innerHTML = channels.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  document.getElementById('forwardOverlay').classList.remove('hidden');
+}
+
+// ── Message editing ───────────────────────────────────────────────────────────
+function startEditMessage(msgId) {
+  const bubble = messagesWrap.querySelector(`[data-msg-id="${msgId}"]`);
+  if (!bubble) return;
+  const currentText = bubble.dataset.msgContent || '';
+  const textEl = bubble.querySelector('.msg-text');
+  if (!textEl) return;
+
+  // Inline edit
+  const editArea = document.createElement('textarea');
+  editArea.className = 'modal-input';
+  editArea.style.cssText = 'width:100%;min-height:60px;resize:none;margin-top:4px;';
+  editArea.value = currentText;
+  textEl.replaceWith(editArea);
+  editArea.focus();
+
+  // Remove existing action bar, replace with save/cancel
+  const actionsEl = bubble.querySelector('.msg-actions');
+  const saveRow = document.createElement('div');
+  saveRow.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
+  saveRow.innerHTML = `
+    <button class="modal-btn primary"   style="padding:5px 14px;font-size:.78rem;" id="saveEdit_${msgId}">Save</button>
+    <button class="modal-btn secondary" style="padding:5px 14px;font-size:.78rem;" id="cancelEdit_${msgId}">Cancel</button>`;
+  bubble.appendChild(saveRow);
+  if (actionsEl) actionsEl.style.display = 'none';
+
+  const cancel = () => {
+    editArea.replaceWith(textEl);
+    saveRow.remove();
+    if (actionsEl) actionsEl.style.display = '';
+  };
+
+  document.getElementById(`saveEdit_${msgId}`).addEventListener('click', async () => {
+    const newText = editArea.value.trim();
+    if (!newText) return;
+    const res = await authFetch(`/chat/messages/${msgId}`, 'PATCH', { content: newText });
+    if (res.ok) {
+      cancel();
+      // WS broadcast will update the bubble for everyone else; update locally too
+      textEl.innerHTML = renderMentions(esc(newText));
+      bubble.dataset.msgContent = newText;
+      let editedEl = bubble.querySelector('.edited-label');
+      if (!editedEl) { editedEl = document.createElement('span'); editedEl.className = 'edited-label'; textEl.after(editedEl); }
+      editedEl.textContent = '(edited)';
+    } else showToast('Edit failed', 'error');
+  });
+  document.getElementById(`cancelEdit_${msgId}`).addEventListener('click', cancel);
+  editArea.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById(`saveEdit_${msgId}`)?.click(); }
+    if (e.key === 'Escape') cancel();
+  });
+}
+
+function scrollToBottom() {
+  messagesWrap.scrollTop = messagesWrap.scrollHeight;
+}
+
+function formatTime(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  return isToday
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function esc(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function showToast(msg, type = '') {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1076,13 +1595,17 @@ async function kickUser(userId, channelId) {
 }
 
 // Expose globally for inline onclick
-window.openReactionPicker = openReactionPicker;
-window.togglePin          = togglePin;
-window.openThreadById     = openThreadById;
-window.deleteChannel      = deleteChannel;
-window.deleteMessage      = deleteMessage;
-window.muteUser           = muteUser;
-window.kickUser           = kickUser;
+window.openReactionPicker  = openReactionPicker;
+window.togglePin           = togglePin;
+window.openThreadById      = openThreadById;
+window.deleteChannel       = deleteChannel;
+window.deleteMessage       = deleteMessage;
+window.muteUser            = muteUser;
+window.kickUser            = kickUser;
+window.openProfileModal    = openProfileModal;
+window.bookmarkMessage     = bookmarkMessage;
+window.openForwardModal    = openForwardModal;
+window.startEditMessage    = startEditMessage;
 
 // ── Delete message ─────────────────────────────────────────────────────────
 async function deleteMessage(msgId) {

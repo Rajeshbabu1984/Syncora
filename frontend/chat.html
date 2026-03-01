@@ -390,6 +390,98 @@
                      border-radius:7px; padding:12px 14px; font-family:monospace;
                      font-size:.73rem; color:var(--text-muted); overflow-x:auto;
                      white-space:pre; margin-top:8px; }
+
+    /* ── New features ── */
+    /* @mention autocomplete */
+    .mention-dropdown { position:absolute; bottom:100%; left:20px; right:20px;
+                        background:var(--bg-sidebar); border:1px solid var(--border);
+                        border-radius:12px; padding:6px; z-index:460;
+                        box-shadow:0 -4px 24px rgba(0,0,0,.45); max-height:200px; overflow-y:auto; }
+    .mention-dropdown.hidden { display:none; }
+    .mention-item { display:flex; align-items:center; gap:10px; padding:7px 10px;
+                    border-radius:8px; cursor:pointer; transition:background .12s; }
+    .mention-item:hover, .mention-item.active { background:var(--bg-active); }
+    .mention-avatar { width:26px; height:26px; border-radius:50%; background:var(--purple);
+                      display:flex; align-items:center; justify-content:center; font-size:.65rem;
+                      font-weight:700; overflow:hidden; flex-shrink:0; }
+    .mention-avatar img { width:100%; height:100%; object-fit:cover; }
+    .mention-name { font-size:.875rem; font-weight:600; }
+    .mention-status { font-size:.72rem; color:var(--text-muted); margin-left:auto; }
+
+    /* Message features */
+    .mention { color:var(--purple-l); background:rgba(124,58,237,.15); border-radius:4px; padding:1px 3px; font-weight:600; }
+    .edited-label { font-size:.68rem; color:var(--text-muted); margin-left:6px; font-style:italic; }
+    .forwarded-label { font-size:.75rem; color:var(--text-muted); margin-bottom:3px; display:block; }
+    .forwarded-label i { color:var(--purple-l); }
+    .link-preview { margin-top:8px; border:1px solid var(--border); border-left:3px solid var(--purple);
+                    border-radius:8px; padding:10px 12px; max-width:400px; background:var(--bg-sidebar); }
+    .link-preview .lp-title { font-weight:600; font-size:.85rem; color:var(--text); }
+    .link-preview .lp-desc  { font-size:.78rem; color:var(--text-muted); margin-top:3px; }
+    .link-preview .lp-url   { font-size:.72rem; color:var(--purple-l); margin-top:4px; text-decoration:none; }
+    .link-preview img { max-width:100%; border-radius:6px; margin-top:8px; }
+
+    /* Category headers in sidebar */
+    .category-header { padding:14px 12px 4px; font-size:.68rem; font-weight:700;
+                       text-transform:uppercase; letter-spacing:.1em; color:var(--text-muted);
+                       display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none; }
+    .category-header:hover { color:var(--text); }
+    .category-arrow { transition:transform .2s; }
+    .category-arrow.collapsed { transform:rotate(-90deg); }
+    .category-channels.collapsed { display:none; }
+
+    /* Avatar images */
+    .avatar-img { width:100%; height:100%; object-fit:cover; border-radius:50%; }
+    .dm-avatar-img { width:100%; height:100%; object-fit:cover; border-radius:50%; }
+    .msg-sender-avatar { width:32px; height:32px; border-radius:50%; background:var(--purple);
+                         display:flex; align-items:center; justify-content:center; font-size:.75rem;
+                         font-weight:700; flex-shrink:0; overflow:hidden; margin-right:10px; }
+
+    /* Bookmarks panel */
+    .bookmarks-panel { position:fixed; top:0; right:0; bottom:0; width:320px;
+                       background:var(--bg-sidebar); border-left:1px solid var(--border);
+                       z-index:400; display:flex; flex-direction:column; transform:translateX(100%);
+                       transition:transform .25s; }
+    .bookmarks-panel.open { transform:translateX(0); }
+    .bookmarks-panel-hdr { padding:16px 18px; border-bottom:1px solid var(--border);
+                           display:flex; align-items:center; justify-content:space-between; }
+    .bookmarks-panel-hdr h4 { font-size:.95rem; font-weight:700; }
+    .bookmarks-panel-body { flex:1; overflow-y:auto; padding:10px; }
+    .bookmark-item { padding:10px; border:1px solid var(--border); border-radius:10px;
+                     margin-bottom:8px; font-size:.8rem; background:var(--bg-main); }
+    .bookmark-item .bki-name { font-weight:600; font-size:.78rem; margin-bottom:3px; color:var(--purple-l); }
+    .bookmark-item .bki-text { color:var(--text); line-height:1.5; }
+    .bookmark-item .bki-del  { float:right; background:none; border:none; color:var(--text-muted);
+                                cursor:pointer; font-size:.8rem; margin-left:8px; }
+    .bookmark-item .bki-del:hover { color:#e55; }
+
+    /* Profile modal */
+    .profile-card { background:var(--bg-sidebar); border:1px solid var(--border);
+                    border-radius:16px; padding:28px; width:360px; max-width:95vw; text-align:center; }
+    .profile-card .p-avatar { width:72px; height:72px; border-radius:50%; background:var(--purple);
+                               display:flex; align-items:center; justify-content:center;
+                               font-size:1.8rem; font-weight:700; margin:0 auto 14px;
+                               overflow:hidden; border:3px solid var(--purple-l); }
+    .profile-card .p-avatar img { width:100%; height:100%; object-fit:cover; }
+    .profile-card .p-name   { font-size:1.2rem; font-weight:800; }
+    .profile-card .p-status { font-size:.82rem; color:var(--online); margin-top:4px; }
+    .profile-card .p-bio    { font-size:.82rem; color:var(--text-muted); margin-top:8px; line-height:1.5; }
+    .profile-card .p-joined { font-size:.72rem; color:var(--text-muted); margin-top:10px; }
+
+    /* My profile edit */
+    .my-profile-edit { cursor:pointer; }
+    .my-profile-edit:hover .user-avatar { outline:2px solid var(--purple-l); }
+
+    /* Invite copy box */
+    .invite-copy-wrap { display:flex; gap:8px; margin-top:14px; }
+    .invite-copy-wrap input { flex:1; background:var(--bg-app); border:1px solid var(--border);
+                               border-radius:8px; padding:9px 12px; color:var(--text);
+                               font-family:monospace; font-size:.82rem; outline:none; }
+    /* Read receipt dots */
+    .read-receipts { display:flex; gap:2px; margin-top:3px; flex-wrap:wrap; }
+    .read-receipt-dot { width:14px; height:14px; border-radius:50%; background:var(--purple);
+                        display:flex; align-items:center; justify-content:center; font-size:.5rem;
+                        font-weight:700; color:#fff; overflow:hidden; }
+    .read-receipt-dot img { width:100%; height:100%; object-fit:cover; }
   </style>
 </head>
 <body>
@@ -442,14 +534,22 @@
           <li><button onclick="openBotsModal()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.82rem;padding:3px 0;display:block;width:100%;text-align:left;">⚡ Volt &amp; Webhooks</button></li>
         </ul>
       </div>
+
+      <!-- Bookmarks -->
+      <div class="sidebar-section" style="margin-top:12px;">
+        <div class="section-header">
+          <span>Bookmarks</span>
+          <button class="btn-add" id="openBookmarksBtn" title="View bookmarks">🔖</button>
+        </div>
+      </div>
     </div>
 
     <!-- Current user -->
-    <div class="sidebar-user">
+    <div class="sidebar-user my-profile-edit" id="sidebarUser" title="Edit your profile">
       <div class="user-avatar" id="userAvatar">?</div>
       <div class="user-info">
         <div class="user-name" id="userNameLabel">—</div>
-        <div class="user-status">● Active</div>
+        <div class="user-status" id="myStatusLabel">● Active</div>
       </div>
     </div>
   </aside>
@@ -459,9 +559,12 @@
     <div class="chat-header">
       <span id="chatTitle" class="chat-title"># general</span>
       <span id="chatDesc" class="chat-desc"></span>
-      <div class="header-actions">        <button class="ia-btn" id="voltTargetBtn" title="Volt: only visible to me" style="display:none;font-size:1rem;">🔒</button>
+      <div class="header-actions">
+        <button class="ia-btn" id="voltTargetBtn" title="Volt: only visible to me" style="display:none;font-size:1rem;">🔒</button>
+        <button class="ia-btn" id="inviteBtn" title="Invite link" style="display:none">🔗</button>
         <button class="ia-btn" id="notifBtn" title="Enable notifications">🔔</button>
-        <button class="ia-btn" id="createPollBtn" title="Create poll"><i class="fa-solid fa-chart-bar"></i></button>        <button class="ia-btn" id="searchBtn" title="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
+        <button class="ia-btn" id="createPollBtn" title="Create poll"><i class="fa-solid fa-chart-bar"></i></button>
+        <button class="ia-btn" id="searchBtn" title="Search"><i class="fa-solid fa-magnifying-glass"></i></button>
         <span id="pinnedBadge" class="pinned-badge hidden">📌 0 pinned</span>
       </div>
     </div>
@@ -471,6 +574,7 @@
     <div class="slowmode-bar hidden" id="slowmodeBar">⏱ Slowmode enabled &mdash; <span id="slowmodeCountdown"></span></div>
     <div class="input-area">
       <div id="slashDropdown" class="slash-dropdown hidden"></div>
+      <div id="mentionDropdown" class="mention-dropdown hidden"></div>
       <div class="input-box">
         <div class="input-actions">
           <button class="ia-btn" id="emojiInputBtn" title="Emoji">😊</button>
@@ -671,5 +775,110 @@
 </div>
 
 <script src="js/chatapp.js"></script>
+
+<!-- Bookmarks panel -->
+<div class="bookmarks-panel" id="bookmarksPanel">
+  <div class="bookmarks-panel-hdr">
+    <h4>🔖 Bookmarks</h4>
+    <button class="ia-btn" id="closeBookmarksBtn">✕</button>
+  </div>
+  <div class="bookmarks-panel-body" id="bookmarksList">
+    <div style="color:var(--text-muted);font-size:.82rem;padding:10px;">Loading…</div>
+  </div>
+</div>
+
+<!-- User profile modal (view other users) -->
+<div class="overlay hidden" id="profileOverlay">
+  <div class="profile-card">
+    <div class="p-avatar" id="profileAvatar">?</div>
+    <div class="p-name"   id="profileName"></div>
+    <div class="p-status" id="profileStatus"></div>
+    <div class="p-bio"    id="profileBio"></div>
+    <div class="p-joined" id="profileJoined"></div>
+    <div class="modal-row" style="margin-top:20px;">
+      <button class="modal-btn primary"   id="profileDmBtn">💬 Direct Message</button>
+      <button class="modal-btn secondary" id="closeProfileBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- My profile edit modal -->
+<div class="overlay hidden" id="myProfileOverlay">
+  <div class="modal-card" style="width:420px;">
+    <h3>✏️ Edit Profile</h3>
+    <div style="display:flex;gap:18px;align-items:center;margin-bottom:20px;">
+      <div class="p-avatar" id="myProfileAvatar" style="width:60px;height:60px;border-radius:50%;flex-shrink:0;overflow:hidden;background:var(--purple);display:flex;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700;border:3px solid var(--purple-l);">?</div>
+      <div>
+        <label for="avatarFileInput" class="modal-btn primary" style="cursor:pointer;display:inline-block;padding:7px 14px;font-size:.8rem;">📷 Change Avatar</label>
+        <input type="file" id="avatarFileInput" accept="image/*" hidden />
+        <div style="font-size:.72rem;color:var(--text-muted);margin-top:5px;">Max 4 MB · PNG/JPG/GIF</div>
+      </div>
+    </div>
+    <label>Display Name</label>
+    <input class="modal-input" id="profileNameInput" maxlength="64" />
+    <label style="margin-top:12px;">Status (shown in DM list)</label>
+    <input class="modal-input" id="profileStatusInput" maxlength="120" placeholder="e.g. Working from home 🏠" />
+    <label style="margin-top:12px;">Bio</label>
+    <textarea class="modal-input" id="profileBioInput" rows="3" maxlength="300" placeholder="Tell the team a bit about yourself…" style="resize:none;"></textarea>
+    <div class="modal-row" style="margin-top:20px;">
+      <button class="modal-btn secondary" id="cancelMyProfileBtn">Cancel</button>
+      <button class="modal-btn primary"   id="saveMyProfileBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invite link modal -->
+<div class="overlay hidden" id="inviteOverlay">
+  <div class="modal-card" style="width:420px;">
+    <h3>🔗 Invite to Channel</h3>
+    <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:6px;">Share this link to let others join <strong id="inviteChannelName"></strong>.</p>
+    <label>Expires after (optional)</label>
+    <select class="modal-input" id="inviteExpiry">
+      <option value="">Never</option>
+      <option value="24">24 hours</option>
+      <option value="72">3 days</option>
+      <option value="168">7 days</option>
+    </select>
+    <label style="margin-top:12px;">Max uses (optional)</label>
+    <input class="modal-input" id="inviteMaxUses" type="number" min="1" placeholder="Unlimited" />
+    <div class="invite-copy-wrap hidden" id="inviteCopyWrap">
+      <input readonly id="inviteLinkInput" />
+      <button class="modal-btn primary" id="copyInviteBtn" style="flex:none;padding:9px 16px;">Copy</button>
+    </div>
+    <div class="modal-row" style="margin-top:20px;">
+      <button class="modal-btn secondary" id="cancelInviteBtn">Cancel</button>
+      <button class="modal-btn primary"   id="generateInviteBtn">Generate Link</button>
+    </div>
+  </div>
+</div>
+
+<!-- Forward message modal -->
+<div class="overlay hidden" id="forwardOverlay">
+  <div class="modal-card" style="width:420px;">
+    <h3>↪️ Forward Message</h3>
+    <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:14px;">Choose where to forward this message.</p>
+    <label>Select channel</label>
+    <select class="modal-input" id="forwardChannelSelect"></select>
+    <div class="modal-row" style="margin-top:20px;">
+      <button class="modal-btn secondary" id="cancelForwardBtn">Cancel</button>
+      <button class="modal-btn primary"   id="confirmForwardBtn">Forward</button>
+    </div>
+  </div>
+</div>
+
+<!-- Category management modal -->
+<div class="overlay hidden" id="categoryOverlay">
+  <div class="modal-card" style="width:400px;">
+    <h3>📁 Channel Categories</h3>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <input class="modal-input" id="newCategoryInput" placeholder="New category name…" maxlength="40" style="flex:1;" />
+      <button class="modal-btn primary" id="addCategoryBtn" style="flex:none;white-space:nowrap;padding:10px 14px;">Add</button>
+    </div>
+    <div id="categoryList" style="max-height:260px;overflow-y:auto;"></div>
+    <div class="modal-row" style="margin-top:16px;">
+      <button class="modal-btn secondary" id="closeCategoryBtn">Close</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

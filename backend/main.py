@@ -66,12 +66,15 @@ engine = create_engine(DATABASE_URL, echo=False, connect_args=_connect_args)
 
 
 class User(SQLModel, table=True):
-    id:             Optional[int]  = Field(default=None, primary_key=True)
-    name:           str            = Field(index=False)
-    email:          str            = Field(index=True, unique=True)
+    id:              Optional[int]  = Field(default=None, primary_key=True)
+    name:            str            = Field(index=False)
+    email:           str            = Field(index=True, unique=True)
     hashed_password: str
-    banned:         bool           = Field(default=False)
-    created_at:     datetime       = Field(default_factory=lambda: datetime.now(timezone.utc))
+    banned:          bool           = Field(default=False)
+    avatar_url:      Optional[str]  = Field(default=None)       # /uploads/avatars/...
+    status:          Optional[str]  = Field(default=None)       # status message
+    bio:             Optional[str]  = Field(default=None)       # short bio
+    created_at:      datetime       = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Channel(SQLModel, table=True):
@@ -80,23 +83,27 @@ class Channel(SQLModel, table=True):
     description:      Optional[str] = None
     created_by:       int           = Field(default=0)
     slowmode_seconds: int           = Field(default=0)
+    category_id:      Optional[int] = Field(default=None)
     created_at:       datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ChatMessage(SQLModel, table=True):
-    id:            Optional[int] = Field(default=None, primary_key=True)
-    channel_id:    Optional[int] = Field(default=None)   # null → DM
-    dm_to_user_id: Optional[int] = Field(default=None)
+    id:            Optional[int]      = Field(default=None, primary_key=True)
+    channel_id:    Optional[int]      = Field(default=None)   # null → DM
+    dm_to_user_id: Optional[int]      = Field(default=None)
     sender_id:     int
     sender_name:   str
-    content:       str           = Field(default="")
-    file_url:      Optional[str] = None
-    file_name:     Optional[str] = None
-    reactions:     str           = Field(default="{}")   # JSON {"😀": [uid,...]}
-    pinned:        bool          = Field(default=False)
-    parent_id:     Optional[int] = Field(default=None)   # thread parent id
-    bot_name:      Optional[str] = Field(default=None)   # set for bot/webhook messages
-    created_at:    datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+    content:       str                = Field(default="")
+    file_url:      Optional[str]      = None
+    file_name:     Optional[str]      = None
+    reactions:     str                = Field(default="{}")   # JSON {"😀": [uid,...]}
+    pinned:        bool               = Field(default=False)
+    parent_id:     Optional[int]      = Field(default=None)   # thread parent id
+    bot_name:      Optional[str]      = Field(default=None)   # set for bot/webhook messages
+    edited:        bool               = Field(default=False)
+    edited_at:     Optional[datetime] = Field(default=None)
+    forwarded_from: Optional[int]     = Field(default=None)   # original message id
+    created_at:    datetime           = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Poll(SQLModel, table=True):
@@ -153,6 +160,38 @@ class RecurringTask(SQLModel, table=True):
     created_at:       datetime           = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class Bookmark(SQLModel, table=True):
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    user_id:    int           = Field(index=True)
+    message_id: int
+    created_at: datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ChannelCategory(SQLModel, table=True):
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    name:       str
+    created_by: int
+    position:   int           = Field(default=0)
+    created_at: datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ChannelCategoryLink(SQLModel, table=True):
+    id:          Optional[int] = Field(default=None, primary_key=True)
+    category_id: int           = Field(index=True)
+    channel_id:  int           = Field(index=True)
+
+
+class InviteLink(SQLModel, table=True):
+    id:         Optional[int]      = Field(default=None, primary_key=True)
+    code:       str                = Field(index=True, unique=True)
+    channel_id: Optional[int]      = Field(default=None)   # None = server-wide invite
+    created_by: int
+    uses:       int                = Field(default=0)
+    max_uses:   Optional[int]      = Field(default=None)   # None = unlimited
+    expires_at: Optional[datetime] = Field(default=None)
+    created_at: datetime           = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 # ── Moderation models ─────────────────────────────────────────────────────────
 
 class MutedUser(SQLModel, table=True):
@@ -203,28 +242,32 @@ def migrate_db():
     with engine.begin() as conn:
         if 'chatmessage' in tables:
             existing = {c['name'] for c in insp.get_columns('chatmessage')}
-            if 'pinned' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN pinned BOOLEAN DEFAULT FALSE'))
-            if 'parent_id' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN parent_id INTEGER DEFAULT NULL'))
-            if 'bot_name' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE chatmessage ADD COLUMN bot_name VARCHAR DEFAULT NULL'))
-        if 'recurringtask' in tables:
-            existing = {c['name'] for c in insp.get_columns('recurringtask')}
-            if 'open_url' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE recurringtask ADD COLUMN open_url VARCHAR DEFAULT NULL'))
-            if 'shell_cmd' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE recurringtask ADD COLUMN shell_cmd VARCHAR DEFAULT NULL'))
-            if 'url_target' not in existing:
-                conn.execute(sqlalchemy.text("ALTER TABLE recurringtask ADD COLUMN url_target VARCHAR DEFAULT 'self'"))
+            for col, ddl in [
+                ('pinned',         'ALTER TABLE chatmessage ADD COLUMN pinned BOOLEAN DEFAULT FALSE'),
+                ('parent_id',      'ALTER TABLE chatmessage ADD COLUMN parent_id INTEGER DEFAULT NULL'),
+                ('bot_name',       'ALTER TABLE chatmessage ADD COLUMN bot_name VARCHAR DEFAULT NULL'),
+                ('edited',         'ALTER TABLE chatmessage ADD COLUMN edited BOOLEAN DEFAULT FALSE'),
+                ('edited_at',      'ALTER TABLE chatmessage ADD COLUMN edited_at DATETIME DEFAULT NULL'),
+                ('forwarded_from', 'ALTER TABLE chatmessage ADD COLUMN forwarded_from INTEGER DEFAULT NULL'),
+            ]:
+                if col not in existing:
+                    conn.execute(sqlalchemy.text(ddl))
         if 'user' in tables:
             existing = {c['name'] for c in insp.get_columns('user')}
             if 'banned' not in existing:
                 conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN banned BOOLEAN DEFAULT FALSE'))
+            if 'avatar_url' not in existing:
+                conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN avatar_url VARCHAR DEFAULT NULL'))
+            if 'status' not in existing:
+                conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN status VARCHAR DEFAULT NULL'))
+            if 'bio' not in existing:
+                conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN bio VARCHAR DEFAULT NULL'))
         if 'channel' in tables:
             existing = {c['name'] for c in insp.get_columns('channel')}
             if 'slowmode_seconds' not in existing:
                 conn.execute(sqlalchemy.text('ALTER TABLE channel ADD COLUMN slowmode_seconds INTEGER DEFAULT 0'))
+            if 'category_id' not in existing:
+                conn.execute(sqlalchemy.text('ALTER TABLE channel ADD COLUMN category_id INTEGER DEFAULT NULL'))
 
 
 def get_session():
@@ -712,19 +755,22 @@ def _poll_dict(p: Poll, session: Session) -> dict:
 
 def _msg_dict(m: ChatMessage) -> dict:
     return {
-        "id":            m.id,
-        "channel_id":    m.channel_id,
-        "dm_to_user_id": m.dm_to_user_id,
-        "sender_id":     m.sender_id,
-        "sender_name":   m.sender_name,
-        "content":       m.content,
-        "file_url":      m.file_url,
-        "file_name":     m.file_name,
-        "reactions":     json.loads(m.reactions or "{}"),
-        "pinned":        bool(m.pinned),
-        "parent_id":     m.parent_id,
-        "bot_name":      m.bot_name,
-        "ts":            m.created_at.isoformat(),
+        "id":             m.id,
+        "channel_id":     m.channel_id,
+        "dm_to_user_id":  m.dm_to_user_id,
+        "sender_id":      m.sender_id,
+        "sender_name":    m.sender_name,
+        "content":        m.content,
+        "file_url":       m.file_url,
+        "file_name":      m.file_name,
+        "reactions":      json.loads(m.reactions or "{}"),
+        "pinned":         bool(m.pinned),
+        "parent_id":      m.parent_id,
+        "bot_name":       m.bot_name,
+        "edited":         bool(m.edited),
+        "edited_at":      m.edited_at.isoformat() if m.edited_at else None,
+        "forwarded_from": m.forwarded_from,
+        "ts":             m.created_at.isoformat(),
     }
 
 
@@ -781,7 +827,8 @@ def list_channels(
 ):
     channels = session.exec(select(Channel).order_by(Channel.created_at)).all()
     return [{"id": c.id, "name": c.name, "description": c.description,
-             "created_by": c.created_by, "slowmode_seconds": c.slowmode_seconds or 0} for c in channels]
+             "created_by": c.created_by, "slowmode_seconds": c.slowmode_seconds or 0,
+             "category_id": c.category_id} for c in channels]
 
 
 @app.post("/chat/channels", status_code=201)
@@ -798,7 +845,7 @@ def create_channel(
     session.commit()
     session.refresh(ch)
     return {"id": ch.id, "name": ch.name, "description": ch.description,
-            "created_by": ch.created_by, "slowmode_seconds": 0}
+            "created_by": ch.created_by, "slowmode_seconds": 0, "category_id": None}
 
 
 @app.get("/chat/channels/{channel_id}/messages")
@@ -824,7 +871,7 @@ def list_chat_users(
     session: Session = Depends(get_session),
 ):
     users = session.exec(select(User).where(User.id != current_user.id)).all()
-    return [{"id": u.id, "name": u.name} for u in users]
+    return [{"id": u.id, "name": u.name, "avatar_url": u.avatar_url, "status": u.status} for u in users]
 
 
 @app.get("/chat/dm/{other_user_id}/messages")
@@ -1368,6 +1415,298 @@ def list_banned(
 ):
     users = session.exec(select(User).where(User.banned == True)).all()  # noqa: E712
     return [{"id": u.id, "name": u.name, "email": u.email} for u in users]
+
+
+# -------------------------------------------------------------
+# Message editing & forwarding
+# -------------------------------------------------------------
+class EditMessageRequest(BaseModel):
+    content: str
+
+@app.patch("/chat/messages/{msg_id}")
+async def edit_message(
+    msg_id: int,
+    body: EditMessageRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    cm = session.get(ChatMessage, msg_id)
+    if not cm:
+        raise HTTPException(404, "Message not found")
+    if cm.sender_id != current_user.id:
+        raise HTTPException(403, "Not your message")
+    cm.content   = _filter_bad_words(body.content.strip())
+    cm.edited    = True
+    cm.edited_at = datetime.now(timezone.utc)
+    session.add(cm); session.commit(); session.refresh(cm)
+    d = _msg_dict(cm)
+    await _chat_broadcast({"type": "message_edit", "message": d})
+    return d
+
+
+@app.post("/chat/messages/{msg_id}/forward")
+async def forward_message(
+    msg_id: int,
+    body: dict,  # {channel_id?, dm_to_user_id?}
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    orig = session.get(ChatMessage, msg_id)
+    if not orig:
+        raise HTTPException(404, "Message not found")
+    channel_id    = body.get("channel_id")
+    dm_to_user_id = body.get("dm_to_user_id")
+    cm = ChatMessage(
+        channel_id=channel_id,
+        dm_to_user_id=dm_to_user_id,
+        sender_id=current_user.id,
+        sender_name=current_user.name,
+        content=orig.content,
+        file_url=orig.file_url,
+        file_name=orig.file_name,
+        forwarded_from=msg_id,
+    )
+    session.add(cm); session.commit(); session.refresh(cm)
+    d = _msg_dict(cm)
+    if channel_id:
+        await _chat_broadcast({"type": "channel_message", "message": d})
+    elif dm_to_user_id:
+        await _chat_send(dm_to_user_id, {"type": "dm", "message": d})
+        await _chat_send(current_user.id, {"type": "dm", "message": d})
+    return d
+
+
+# -------------------------------------------------------------
+# Bookmarks
+# -------------------------------------------------------------
+@app.get("/bookmarks")
+async def list_bookmarks(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    bms = session.exec(select(Bookmark).where(Bookmark.user_id == current_user.id)
+                       .order_by(Bookmark.created_at.desc())).all()
+    result = []
+    for b in bms:
+        cm = session.get(ChatMessage, b.message_id)
+        if cm:
+            d = _msg_dict(cm); d["bookmark_id"] = b.id
+            result.append(d)
+    return result
+
+
+@app.post("/bookmarks/{msg_id}", status_code=201)
+async def add_bookmark(
+    msg_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    existing = session.exec(select(Bookmark).where(
+        Bookmark.user_id == current_user.id, Bookmark.message_id == msg_id)).first()
+    if existing:
+        return {"detail": "Already bookmarked", "id": existing.id}
+    bm = Bookmark(user_id=current_user.id, message_id=msg_id)
+    session.add(bm); session.commit(); session.refresh(bm)
+    return {"detail": "Bookmarked", "id": bm.id}
+
+
+@app.delete("/bookmarks/{msg_id}")
+async def remove_bookmark(
+    msg_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    bm = session.exec(select(Bookmark).where(
+        Bookmark.user_id == current_user.id, Bookmark.message_id == msg_id)).first()
+    if bm:
+        session.delete(bm); session.commit()
+    return {"detail": "Removed"}
+
+
+# -------------------------------------------------------------
+# User profiles & avatars
+# -------------------------------------------------------------
+def _user_profile_dict(u: User) -> dict:
+    return {
+        "id":         u.id,
+        "name":       u.name,
+        "email":      u.email,
+        "avatar_url": u.avatar_url,
+        "status":     u.status,
+        "bio":        u.bio,
+        "joined":     u.created_at.isoformat(),
+    }
+
+
+@app.get("/users/me/profile")
+async def get_my_profile(current_user: User = Depends(get_current_user)):
+    return _user_profile_dict(current_user)
+
+
+class ProfileUpdateRequest(BaseModel):
+    name:   Optional[str] = None
+    status: Optional[str] = None
+    bio:    Optional[str] = None
+
+
+@app.patch("/users/me/profile")
+async def update_my_profile(
+    body: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    u = session.get(User, current_user.id)
+    if body.name   is not None: u.name   = body.name.strip()[:64]
+    if body.status is not None: u.status = body.status.strip()[:120]
+    if body.bio    is not None: u.bio    = body.bio.strip()[:300]
+    session.add(u); session.commit(); session.refresh(u)
+    # Broadcast status change to all online users
+    await _chat_broadcast({"type": "user_status", "user_id": u.id, "status": u.status, "name": u.name})
+    return _user_profile_dict(u)
+
+
+AVATAR_DIR = os.path.join(UPLOADS_DIR, "avatars")
+os.makedirs(AVATAR_DIR, exist_ok=True)
+
+@app.post("/users/me/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    ext   = os.path.splitext(file.filename or "")[1].lower() or ".png"
+    fname = f"av_{current_user.id}{ext}"
+    dest  = os.path.join(AVATAR_DIR, fname)
+    content = await file.read()
+    if len(content) > 4 * 1024 * 1024:
+        raise HTTPException(400, "Avatar must be under 4 MB")
+    with open(dest, "wb") as f:
+        f.write(content)
+    u = session.get(User, current_user.id)
+    u.avatar_url = f"/uploads/avatars/{fname}"
+    session.add(u); session.commit()
+    await _chat_broadcast({"type": "user_status", "user_id": u.id, "avatar_url": u.avatar_url})
+    return {"avatar_url": u.avatar_url}
+
+
+@app.get("/users/{user_id}/profile")
+async def get_user_profile(
+    user_id: int,
+    _: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    u = session.get(User, user_id)
+    if not u:
+        raise HTTPException(404, "User not found")
+    return _user_profile_dict(u)
+
+
+# -------------------------------------------------------------
+# Channel categories
+# -------------------------------------------------------------
+class CategoryCreate(BaseModel):
+    name:     str
+    position: int = 0
+
+
+@app.get("/channels/categories")
+async def list_categories(
+    _: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    cats = session.exec(select(ChannelCategory).order_by(ChannelCategory.position)).all()
+    return [{"id": c.id, "name": c.name, "position": c.position} for c in cats]
+
+
+@app.post("/channels/categories", status_code=201)
+async def create_category(
+    body: CategoryCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    cat = ChannelCategory(name=body.name.strip(), created_by=current_user.id, position=body.position)
+    session.add(cat); session.commit(); session.refresh(cat)
+    return {"id": cat.id, "name": cat.name, "position": cat.position}
+
+
+@app.delete("/channels/categories/{cat_id}")
+async def delete_category(
+    cat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    cat = session.get(ChannelCategory, cat_id)
+    if not cat:
+        raise HTTPException(404, "Category not found")
+    if cat.created_by != current_user.id:
+        raise HTTPException(403, "Not your category")
+    session.delete(cat); session.commit()
+    return {"detail": "Deleted"}
+
+
+@app.patch("/chat/channels/{channel_id}/category")
+async def set_channel_category(
+    channel_id: int,
+    body: dict,   # {category_id: int | null}
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    ch = session.get(Channel, channel_id)
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    if ch.created_by != current_user.id and ch.created_by != 0:
+        raise HTTPException(403, "Not your channel")
+    ch.category_id = body.get("category_id")
+    session.add(ch); session.commit()
+    return {"detail": "Updated"}
+
+
+# -------------------------------------------------------------
+# Invite links
+# -------------------------------------------------------------
+@app.post("/invite")
+async def create_invite(
+    body: dict,   # {channel_id?, max_uses?, expires_hours?}
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    code       = secrets.token_urlsafe(8)
+    channel_id = body.get("channel_id")
+    max_uses   = body.get("max_uses")
+    exp_hours  = body.get("expires_hours")
+    expires_at = None
+    if exp_hours:
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=int(exp_hours))
+    inv = InviteLink(code=code, channel_id=channel_id, created_by=current_user.id,
+                     max_uses=max_uses, expires_at=expires_at)
+    session.add(inv); session.commit(); session.refresh(inv)
+    return {"code": code, "url": f"/invite/{code}", "channel_id": channel_id,
+            "expires_at": expires_at.isoformat() if expires_at else None}
+
+
+@app.get("/invite/{code}")
+async def use_invite(
+    code: str,
+    _: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    inv = session.exec(select(InviteLink).where(InviteLink.code == code)).first()
+    if not inv:
+        raise HTTPException(404, "Invite not found or expired")
+    now_utc = datetime.now(timezone.utc)
+    if inv.expires_at and inv.expires_at.replace(tzinfo=timezone.utc) < now_utc:
+        raise HTTPException(410, "Invite has expired")
+    if inv.max_uses and inv.uses >= inv.max_uses:
+        raise HTTPException(410, "Invite has reached maximum uses")
+    inv.uses += 1
+    session.add(inv); session.commit()
+    ch = session.get(Channel, inv.channel_id) if inv.channel_id else None
+    return {
+        "code":       code,
+        "channel_id": inv.channel_id,
+        "channel":    {"id": ch.id, "name": ch.name} if ch else None,
+        "uses":       inv.uses,
+    }
 
 
 # -------------------------------------------------------------
