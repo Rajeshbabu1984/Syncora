@@ -15,17 +15,30 @@ Endpoints:
     GET  /rooms                                     � Active room stats
 """
 
+import base64
+import csv
+import hashlib
+import io
 import json
 import logging
 import os
 import re
 import secrets
 import shutil
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import httpx
+import pyotp
+import qrcode
 from bs4 import BeautifulSoup
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, status, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,6 +91,10 @@ class User(SQLModel, table=True):
     avatar_url:      Optional[str]  = Field(default=None)       # /uploads/avatars/...
     status:          Optional[str]  = Field(default=None)       # status message
     bio:             Optional[str]  = Field(default=None)       # short bio
+    role:            str            = Field(default='member')   # 'admin'|'moderator'|'member'
+    presence:        str            = Field(default='online')   # 'online'|'away'|'dnd'|'offline'
+    totp_secret:     Optional[str]  = Field(default=None)
+    totp_enabled:    bool           = Field(default=False)
     created_at:      datetime       = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -88,6 +105,7 @@ class Channel(SQLModel, table=True):
     created_by:       int           = Field(default=0)
     slowmode_seconds: int           = Field(default=0)
     category_id:      Optional[int] = Field(default=None)
+    welcome_message:  Optional[str] = Field(default=None)
     created_at:       datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -234,6 +252,44 @@ class AuditLog(SQLModel, table=True):
     created_at:       datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class UserSession(SQLModel, table=True):
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    user_id:    int           = Field(index=True)
+    token_hash: str           = Field(index=True)
+    device:     Optional[str] = Field(default=None)
+    ip_addr:    Optional[str] = Field(default=None)
+    created_at: datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_used:  datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+    active:     bool          = Field(default=True)
+
+
+class WebhookConfig(SQLModel, table=True):
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    channel_id: int           = Field(index=True)
+    name:       str
+    token:      str           = Field(index=True)
+    created_by: int
+    active:     bool          = Field(default=True)
+    created_at: datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ChannelRole(SQLModel, table=True):
+    id:          Optional[int] = Field(default=None, primary_key=True)
+    channel_id:  int           = Field(index=True)
+    user_id:     int           = Field(index=True)
+    role:        str           = Field(default='member')
+    assigned_by: int
+    created_at:  datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ServerSetting(SQLModel, table=True):
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    key:        str           = Field(index=True, unique=True)
+    value:      str           = Field(default='')
+    updated_by: Optional[int] = Field(default=None)
+    updated_at: datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 def create_db_tables():
     SQLModel.metadata.create_all(engine)
 
@@ -258,20 +314,27 @@ def migrate_db():
                     conn.execute(sqlalchemy.text(ddl))
         if 'user' in tables:
             existing = {c['name'] for c in insp.get_columns('user')}
-            if 'banned' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN banned BOOLEAN DEFAULT FALSE'))
-            if 'avatar_url' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN avatar_url VARCHAR DEFAULT NULL'))
-            if 'status' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN status VARCHAR DEFAULT NULL'))
-            if 'bio' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE user ADD COLUMN bio VARCHAR DEFAULT NULL'))
+            for col, ddl in [
+                ('banned',       'ALTER TABLE user ADD COLUMN banned BOOLEAN DEFAULT FALSE'),
+                ('avatar_url',   'ALTER TABLE user ADD COLUMN avatar_url VARCHAR DEFAULT NULL'),
+                ('status',       'ALTER TABLE user ADD COLUMN status VARCHAR DEFAULT NULL'),
+                ('bio',          'ALTER TABLE user ADD COLUMN bio VARCHAR DEFAULT NULL'),
+                ('role',         "ALTER TABLE user ADD COLUMN role VARCHAR DEFAULT 'member'"),
+                ('presence',     "ALTER TABLE user ADD COLUMN presence VARCHAR DEFAULT 'online'"),
+                ('totp_secret',  'ALTER TABLE user ADD COLUMN totp_secret VARCHAR DEFAULT NULL'),
+                ('totp_enabled', 'ALTER TABLE user ADD COLUMN totp_enabled BOOLEAN DEFAULT FALSE'),
+            ]:
+                if col not in existing:
+                    conn.execute(sqlalchemy.text(ddl))
         if 'channel' in tables:
             existing = {c['name'] for c in insp.get_columns('channel')}
-            if 'slowmode_seconds' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE channel ADD COLUMN slowmode_seconds INTEGER DEFAULT 0'))
-            if 'category_id' not in existing:
-                conn.execute(sqlalchemy.text('ALTER TABLE channel ADD COLUMN category_id INTEGER DEFAULT NULL'))
+            for col, ddl in [
+                ('slowmode_seconds', 'ALTER TABLE channel ADD COLUMN slowmode_seconds INTEGER DEFAULT 0'),
+                ('category_id',      'ALTER TABLE channel ADD COLUMN category_id INTEGER DEFAULT NULL'),
+                ('welcome_message',  'ALTER TABLE channel ADD COLUMN welcome_message VARCHAR DEFAULT NULL'),
+            ]:
+                if col not in existing:
+                    conn.execute(sqlalchemy.text(ddl))
 
 
 def get_session():
@@ -344,7 +407,10 @@ class AuthResponse(BaseModel):
 # -------------------------------------------------------------
 # App
 # -------------------------------------------------------------
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="SyncTact Signaling Server", version="2.0.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -522,7 +588,8 @@ async def start_scheduler():
 # Auth endpoints
 # -------------------------------------------------------------
 @app.post("/auth/signup", response_model=AuthResponse)
-def signup(req: SignUpRequest, session: Session = Depends(get_session)):
+@limiter.limit("5/minute")
+def signup(req: SignUpRequest, request: Request, session: Session = Depends(get_session)):
     req.name  = req.name.strip()
     req.email = req.email.strip().lower()
 
@@ -541,25 +608,317 @@ def signup(req: SignUpRequest, session: Session = Depends(get_session)):
     session.refresh(user)
 
     token = create_token(user.id, user.email)
+    tok_hash = hashlib.sha256(token.encode()).hexdigest()
+    ua = request.headers.get("user-agent", "")[:200]
+    ip = get_remote_address(request)
+    session.add(UserSession(user_id=user.id, token_hash=tok_hash, device=ua, ip_addr=ip))
+    session.commit()
     log.info("New user signed up: %s (%s)", user.name, user.email)
     return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
 
 
 @app.post("/auth/signin", response_model=AuthResponse)
-def signin(req: SignInRequest, session: Session = Depends(get_session)):
+@limiter.limit("10/minute")
+def signin(req: SignInRequest, request: Request, session: Session = Depends(get_session)):
     req.email = req.email.strip().lower()
     user = session.exec(select(User).where(User.email == req.email)).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
-
+    if getattr(user, 'banned', False):
+        raise HTTPException(status_code=403, detail="Account banned")
     token = create_token(user.id, user.email)
+    tok_hash = hashlib.sha256(token.encode()).hexdigest()
+    ua = request.headers.get("user-agent", "")[:200]
+    ip = get_remote_address(request)
+    sess_rec = UserSession(user_id=user.id, token_hash=tok_hash, device=ua, ip_addr=ip)
+    session.add(sess_rec)
+    session.commit()
     log.info("User signed in: %s (%s)", user.name, user.email)
     return {"token": token, "user": {"id": user.id, "name": user.name, "email": user.email}}
 
 
 @app.get("/auth/me")
 def me(current_user: User = Depends(get_current_user)):
-    return {"id": current_user.id, "name": current_user.name, "email": current_user.email}
+    return {
+        "id": current_user.id, "name": current_user.name, "email": current_user.email,
+        "role": getattr(current_user, "role", "member"),
+        "presence": getattr(current_user, "presence", "online"),
+        "totp_enabled": getattr(current_user, "totp_enabled", False),
+        "avatar": current_user.avatar,
+    }
+
+
+# -------------------------------------------------------------
+# Sessions endpoints
+# -------------------------------------------------------------
+@app.get("/auth/sessions")
+def list_sessions(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    rows = session.exec(select(UserSession).where(UserSession.user_id == current_user.id, UserSession.active == True)).all()
+    return [{"id": r.id, "device": r.device, "ip_addr": r.ip_addr, "created_at": str(r.created_at), "last_used": str(r.last_used)} for r in rows]
+
+@app.delete("/auth/sessions/{sid}")
+def revoke_session(sid: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    row = session.get(UserSession, sid)
+    if not row or row.user_id != current_user.id:
+        raise HTTPException(404)
+    row.active = False
+    session.add(row); session.commit()
+    return {"ok": True}
+
+
+# -------------------------------------------------------------
+# 2FA endpoints
+# -------------------------------------------------------------
+@app.post("/auth/2fa/setup")
+def twofa_setup(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    secret = pyotp.random_base32()
+    user = session.get(User, current_user.id)
+    user.totp_secret = secret
+    session.add(user); session.commit()
+    uri = pyotp.totp.TOTP(secret).provisioning_uri(name=user.email, issuer_name="SyncTact")
+    img = qrcode.make(uri)
+    buf = io.BytesIO(); img.save(buf, format="PNG"); buf.seek(0)
+    qr_b64 = base64.b64encode(buf.read()).decode()
+    return {"secret": secret, "otpauth_uri": uri, "qr_data_url": f"data:image/png;base64,{qr_b64}"}
+
+@app.post("/auth/2fa/confirm")
+def twofa_confirm(body: dict, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    user = session.get(User, current_user.id)
+    if not user.totp_secret:
+        raise HTTPException(400, "2FA not set up")
+    if not pyotp.TOTP(user.totp_secret).verify(str(body.get("code", ""))):
+        raise HTTPException(400, "Invalid code")
+    user.totp_enabled = True
+    session.add(user); session.commit()
+    return {"ok": True}
+
+@app.post("/auth/2fa/verify")
+def twofa_verify(body: dict, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    user = session.get(User, current_user.id)
+    if not user.totp_enabled:
+        raise HTTPException(400, "2FA not enabled")
+    if not pyotp.TOTP(user.totp_secret).verify(str(body.get("code", ""))):
+        raise HTTPException(400, "Invalid code")
+    return {"ok": True}
+
+@app.delete("/auth/2fa")
+def twofa_disable(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    user = session.get(User, current_user.id)
+    user.totp_enabled = False; user.totp_secret = None
+    session.add(user); session.commit()
+    return {"ok": True}
+
+
+# -------------------------------------------------------------
+# Presence
+# -------------------------------------------------------------
+@app.patch("/users/me/presence")
+async def update_presence(body: dict, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    allowed = {"online", "away", "dnd", "offline"}
+    pres = body.get("presence", "online")
+    if pres not in allowed:
+        raise HTTPException(400, "Invalid presence value")
+    user = session.get(User, current_user.id)
+    user.presence = pres
+    session.add(user); session.commit()
+    await manager.broadcast({"type": "user_status", "user_id": current_user.id, "presence": pres})
+    return {"ok": True, "presence": pres}
+
+
+# -------------------------------------------------------------
+# Server settings
+# -------------------------------------------------------------
+@app.get("/settings")
+def get_settings(current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    rows = session.exec(select(ServerSetting)).all()
+    return {r.key: r.value for r in rows}
+
+@app.patch("/settings")
+def update_settings(body: dict, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    if getattr(current_user, "role", "member") not in ("admin", "moderator"):
+        raise HTTPException(403, "Insufficient permissions")
+    for k, v in body.items():
+        row = session.exec(select(ServerSetting).where(ServerSetting.key == k)).first()
+        if row:
+            row.value = str(v); row.updated_by = current_user.id; row.updated_at = datetime.utcnow()
+            session.add(row)
+        else:
+            session.add(ServerSetting(key=k, value=str(v), updated_by=current_user.id))
+    session.commit()
+    return {"ok": True}
+
+
+# -------------------------------------------------------------
+# Channel roles / members
+# -------------------------------------------------------------
+@app.get("/channels/{channel_id}/members")
+def channel_members(channel_id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    sids = session.exec(select(ChatMessage.sender_id).where(ChatMessage.channel_id == channel_id).distinct()).all()
+    uids = list({r for r in sids if r})
+    users = session.exec(select(User).where(User.id.in_(uids))).all() if uids else []
+    roles_rows = session.exec(select(ChannelRole).where(ChannelRole.channel_id == channel_id)).all()
+    role_map = {r.user_id: r.role for r in roles_rows}
+    return [{"id": u.id, "name": u.name, "avatar": u.avatar,
+             "role": role_map.get(u.id, getattr(u, "role", "member")),
+             "presence": getattr(u, "presence", "online")} for u in users]
+
+@app.put("/channels/{channel_id}/members/{user_id}/role")
+def set_channel_role(channel_id: int, user_id: int, body: dict,
+                     current_user: User = Depends(get_current_user),
+                     session: Session = Depends(get_session)):
+    if getattr(current_user, "role", "member") not in ("admin", "moderator"):
+        raise HTTPException(403, "Insufficient permissions")
+    role_val = body.get("role", "member")
+    row = session.exec(select(ChannelRole).where(ChannelRole.channel_id == channel_id, ChannelRole.user_id == user_id)).first()
+    if row:
+        row.role = role_val; session.add(row)
+    else:
+        session.add(ChannelRole(channel_id=channel_id, user_id=user_id, role=role_val, assigned_by=current_user.id))
+    session.commit()
+    return {"ok": True}
+
+
+# -------------------------------------------------------------
+# Webhooks
+# -------------------------------------------------------------
+@app.get("/webhooks")
+def list_webhooks(channel_id: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    rows = session.exec(select(WebhookConfig).where(WebhookConfig.channel_id == channel_id, WebhookConfig.active == True)).all()
+    return [{"id": r.id, "name": r.name, "token": r.token, "channel_id": r.channel_id} for r in rows]
+
+@app.post("/webhooks")
+def create_webhook(body: dict, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    cid = body.get("channel_id"); name = body.get("name", "Webhook")
+    if not cid:
+        raise HTTPException(400, "channel_id required")
+    tok = hashlib.sha256(f"{cid}{name}{time.time()}".encode()).hexdigest()
+    wh = WebhookConfig(channel_id=cid, name=name, token=tok, created_by=current_user.id)
+    session.add(wh); session.commit(); session.refresh(wh)
+    return {"id": wh.id, "name": wh.name, "token": wh.token, "channel_id": wh.channel_id}
+
+@app.delete("/webhooks/{wid}")
+def delete_webhook(wid: int, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    row = session.get(WebhookConfig, wid)
+    if not row:
+        raise HTTPException(404)
+    row.active = False; session.add(row); session.commit()
+    return {"ok": True}
+
+@app.post("/webhook/{token}")
+async def receive_webhook(token: str, body: dict, session: Session = Depends(get_session)):
+    wh = session.exec(select(WebhookConfig).where(WebhookConfig.token == token, WebhookConfig.active == True)).first()
+    if not wh:
+        raise HTTPException(404, "Webhook not found")
+    content = str(body.get("content", "")).strip()[:2000]
+    sender = str(body.get("sender_name", wh.name))[:100]
+    if not content:
+        raise HTTPException(400, "content required")
+    msg = ChatMessage(channel_id=wh.channel_id, sender_id=0, sender_name=sender,
+                      content=content, bot_name=wh.name)
+    session.add(msg); session.commit(); session.refresh(msg)
+    await manager.broadcast({"type": "new_message", "channel_id": wh.channel_id,
+                             "message": {"id": msg.id, "content": msg.content,
+                                         "sender_name": msg.sender_name, "bot_name": msg.bot_name,
+                                         "created_at": str(msg.created_at)}})
+    return {"ok": True, "message_id": msg.id}
+
+
+# -------------------------------------------------------------
+# Full-text search
+# -------------------------------------------------------------
+@app.get("/chat/search")
+def search_messages(q: str = "", limit: int = 50, current_user: User = Depends(get_current_user), session: Session = Depends(get_session)):
+    if not q.strip():
+        return []
+    rows = session.exec(
+        select(ChatMessage)
+        .where(ChatMessage.content.contains(q))
+        .order_by(ChatMessage.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [{"id": m.id, "content": m.content, "channel_id": m.channel_id,
+             "sender_id": m.sender_id, "sender_name": m.sender_name,
+             "created_at": str(m.created_at)} for m in rows]
+
+
+# -------------------------------------------------------------
+# Export chat history
+# -------------------------------------------------------------
+@app.get("/chat/channels/{channel_id}/export")
+def export_channel(channel_id: int, format: str = "json",
+                   current_user: User = Depends(get_current_user),
+                   session: Session = Depends(get_session)):
+    rows = session.exec(
+        select(ChatMessage)
+        .where(ChatMessage.channel_id == channel_id)
+        .order_by(ChatMessage.created_at.asc())
+    ).all()
+    data = [{"id": m.id, "sender": m.sender_name, "content": m.content,
+             "created_at": str(m.created_at)} for m in rows]
+    if format == "csv":
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=["id", "sender", "content", "created_at", "msg_type"])
+        writer.writeheader(); writer.writerows(data)
+        return StreamingResponse(io.BytesIO(buf.getvalue().encode()),
+                                 media_type="text/csv",
+                                 headers={"Content-Disposition": f"attachment; filename=channel_{channel_id}.csv"})
+    import json
+    return StreamingResponse(io.BytesIO(json.dumps(data, indent=2).encode()),
+                             media_type="application/json",
+                             headers={"Content-Disposition": f"attachment; filename=channel_{channel_id}.json"})
+
+
+# -------------------------------------------------------------
+# Audit log viewer
+# -------------------------------------------------------------
+@app.get("/audit-log")
+def get_audit_log(limit: int = 50, channel_id: Optional[int] = None,
+                  current_user: User = Depends(get_current_user),
+                  session: Session = Depends(get_session)):
+    q = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)
+    if channel_id:
+        q = select(AuditLog).where(AuditLog.channel_id == channel_id).order_by(AuditLog.created_at.desc()).limit(limit)
+    rows = session.exec(q).all()
+    return [{"id": r.id, "action": r.action, "actor_id": r.actor_id,
+             "target_id": r.target_id, "channel_id": r.channel_id,
+             "detail": r.detail, "created_at": str(r.created_at)} for r in rows]
+
+
+# -------------------------------------------------------------
+# Analytics
+# -------------------------------------------------------------
+@app.get("/analytics/activity")
+def analytics_activity(channel_id: Optional[int] = None, days: int = 7,
+                        current_user: User = Depends(get_current_user),
+                        session: Session = Depends(get_session)):
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    q = select(ChatMessage).where(ChatMessage.created_at >= cutoff)
+    if channel_id:
+        q = q.where(ChatMessage.channel_id == channel_id)
+    rows = session.exec(q).all()
+    counts: dict = defaultdict(int)
+    for m in rows:
+        day = str(m.created_at)[:10]
+        counts[day] += 1
+    result = sorted([{"date": k, "count": v} for k, v in counts.items()], key=lambda x: x["date"])
+    return result
+
+@app.get("/analytics/leaderboard")
+def analytics_leaderboard(channel_id: Optional[int] = None, limit: int = 10,
+                           current_user: User = Depends(get_current_user),
+                           session: Session = Depends(get_session)):
+    q = select(ChatMessage).where(ChatMessage.sender_id != 0)
+    if channel_id:
+        q = q.where(ChatMessage.channel_id == channel_id)
+    rows = session.exec(q).all()
+    counts: dict = defaultdict(int)
+    uid_set = set()
+    for m in rows:
+        counts[m.sender_id] += 1
+        uid_set.add(m.sender_id)
+    users = {u.id: u.name for u in session.exec(select(User).where(User.id.in_(list(uid_set)))).all()} if uid_set else {}
+    top = sorted(counts.items(), key=lambda x: -x[1])[:limit]
+    return [{"user_id": uid, "name": users.get(uid, "Unknown"), "count": cnt} for uid, cnt in top]
 
 
 # -------------------------------------------------------------

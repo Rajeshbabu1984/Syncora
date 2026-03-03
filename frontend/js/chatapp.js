@@ -229,6 +229,11 @@ async function initChat() {
   initMuteHandler();
   initGalleryHandlers();
   initVoiceHandlers();
+  initThemeToggle();
+  initPresenceSelector();
+  initNewFeatureHandlers();
+  initKeyboardShortcuts();
+  initUnreadJump();
 
   // @mention dropdown keyboard nav
   document.getElementById('mentionDropdown').addEventListener('mousedown', e => {
@@ -260,8 +265,11 @@ function handleServerMsg(msg) {
     case 'channel_message': {
       const m = msg.message;
       if (activeType === 'channel' && activeId === m.channel_id) {
+        const wrap = document.getElementById('messagesWrap');
+        const wasAtBottom = !wrap || wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 120;
         appendMessage(m, false);
-        scrollToBottom();
+        if (wasAtBottom) scrollToBottom();
+        else notifyUnread();
       } else {
         unread[m.channel_id] = (unread[m.channel_id] || 0) + 1;
         updateUnreadBadge(m.channel_id);
@@ -508,6 +516,7 @@ async function loadChannels() {
 // renderChannelList is defined later (with category support)
 
 async function openChannel(ch) {
+  saveDraft();
   activeType  = 'channel';
   activeId    = ch.id;
   activeDmName = '';
@@ -535,7 +544,14 @@ async function openChannel(ch) {
     voltTargetBtn.style.display = '';
     _updateVoltTargetBtn();
   }
-  await Promise.all([loadMessages('channel', ch.id), loadPinnedMessages(ch.id)]);
+  // Show new buttons for channel context
+  ['membersBtn', 'webhooksHeaderBtn', 'exportBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = '';
+  });
+  // Restore draft
+  restoreDraft();
+  await Promise.all([loadMessages('channel', ch.id), loadPinnedMessages(ch.id), loadChannelPolls(ch.id)]);
   _updateSlowmodeBar(ch.slowmode_seconds || 0);
   // 1-second auto-refresh for pinned badge (instant fallback if WS misses an event)
   clearInterval(_pinnedPollTimer);
@@ -578,6 +594,7 @@ function renderDmList() {
 }
 
 async function openDm(uid, name) {
+  saveDraft();
   activeType   = 'dm';
   activeId     = uid;
   activeDmName = name;
@@ -597,6 +614,7 @@ async function openDm(uid, name) {
   bar.classList.add('hidden');
   bar.innerHTML = '';
   await loadMessages('dm', uid);
+  restoreDraft();
   // Notify sender that messages were read
   wsSend({ type: 'mark_dm_read', to_user_id: uid });
 }
@@ -681,7 +699,7 @@ function appendMessage(m, initial) {
 
   let inner = '';
   if (m.forwarded_from) inner += `<span class="forwarded-label"><i class="fa-solid fa-share"></i> Forwarded</span>`;
-  if (m.content) inner += `<span class="msg-text">${renderMentions(esc(m.content))}</span>`;
+  if (m.content) inner += `<span class="msg-text">${renderMentions(typeof renderMarkdown === 'function' ? renderMarkdown(m.content) : esc(m.content))}</span>`;
   if (m.edited)  inner += `<span class="edited-label">(edited)</span>`;
   if (m.file_url) {
     const fullUrl   = API + m.file_url;
@@ -2219,21 +2237,24 @@ function appendPollCard(p) {
 }
 
 function buildPollCard(card, p) {
-  const totalVotes = p.options.reduce((s, o) => s + o.count, 0);
-  const myVote     = p.options.findIndex(o => o.voters && o.voters.includes(user.id));
+  const counts     = p.counts  || p.options.map(() => 0);
+  const voters     = p.voters  || p.options.map(() => []);
+  const totalVotes = counts.reduce((s, c) => s + c, 0);
+  const myVote     = voters.findIndex(v => v && v.includes(user.id));
+  const voted      = myVote >= 0;
   card.innerHTML = `
     <h4>${esc(p.question)} <span class="poll-badge">Poll by ${esc(p.creator_name)}</span></h4>
     ${p.options.map((opt, i) => {
-      const pct = totalVotes ? Math.round(opt.count / totalVotes * 100) : 0;
-      const voted = myVote >= 0;
+      const pct  = totalVotes ? Math.round(counts[i] / totalVotes * 100) : 0;
+      const mine = myVote === i;
       return `<div class="poll-option">
-        <div class="poll-bar-wrap${voted ? ' voted' : ''}" data-option="${i}" onclick="votePoll(${p.id},${i},this)">
+        <button class="poll-bar-wrap${voted ? ' voted' : ''}${mine ? ' my-vote' : ''}" data-option="${i}" onclick="votePoll(${p.id},${i},this)" ${voted ? 'disabled' : ''}>
           <div class="poll-bar" style="width:${pct}%"></div>
           <div class="poll-bar-label">
-            <span>${esc(opt.label)}</span>
-            <span style="color:var(--text-muted)">${pct}%</span>
+            <span>${esc(opt)}${mine ? ' ✓' : ''}</span>
+            <span style="color:var(--text-muted)">${voted ? pct + '%' : ''}</span>
           </div>
-        </div>
+        </button>
       </div>`;
     }).join('')}
     <div class="poll-total">${totalVotes} vote${totalVotes !== 1 ? 's' : ''}</div>`;
@@ -2241,6 +2262,15 @@ function buildPollCard(card, p) {
 
 function updatePollCard(card, p) {
   buildPollCard(card, p);
+}
+
+async function loadChannelPolls(channelId) {
+  const res = await authFetch(`/chat/channels/${channelId}/polls`);
+  if (!res.ok) return;
+  const polls = await res.json();
+  polls.forEach(p => {
+    if (!document.querySelector(`[data-poll-id="${p.id}"]`)) appendPollCard(p);
+  });
 }
 
 window.votePoll = async function(pollId, optionIndex, el) {
@@ -2458,6 +2488,492 @@ window.toggleTask = async function(id, btn) {
   tasksData = tasksData.map(t => t.id === id ? updated : t);
   renderTasks();
 };
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NEW FEATURES  (theme toggle, presence, settings, webhooks, audit log,
+//                analytics, export, members, 2FA, sessions, markdown,
+//                keyboard shortcuts, drafts, unread jump)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Markdown renderer (lightweight) ─────────────────────────────────────────
+function renderMarkdown(rawText) {
+  if (!rawText) return '';
+  let s = esc(rawText);
+  // Code blocks  ```…```
+  s = s.replace(/```([\s\S]*?)```/g, (_m, code) => `<pre style="background:var(--bg-input);padding:8px 10px;border-radius:6px;overflow-x:auto;font-size:.8rem;font-family:monospace;margin-top:4px;">${code.trim()}</pre>`);
+  // Inline code  `…`
+  s = s.replace(/`([^`]+)`/g, '<code style="background:var(--bg-input);padding:1px 5px;border-radius:4px;font-family:monospace;font-size:.85em;">$1</code>');
+  // Bold   **…**
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic *…* or _…_
+  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  s = s.replace(/_(.+?)_/g, '<em>$1</em>');
+  // Strikethrough ~~…~~
+  s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  // Block quote
+  s = s.replace(/^&gt; (.+)$/gm, '<blockquote style="border-left:3px solid var(--purple);padding-left:8px;color:var(--text-muted);margin:2px 0;">$1</blockquote>');
+  // Link [text](url)
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:var(--purple-l);">$1</a>');
+  // Bare URL
+  s = s.replace(/(^|[\s])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener" style="color:var(--purple-l);">$2</a>');
+  // Newlines
+  s = s.replace(/\n/g, '<br>');
+  return s;
+}
+
+// ── Theme toggle ─────────────────────────────────────────────────────────────
+function initThemeToggle() {
+  const btn = document.getElementById('themeToggleBtn');
+  const cb  = document.getElementById('lightThemeCheckbox');
+  const apply = (light) => {
+    document.body.classList.toggle('light-theme', light);
+    if (btn) btn.textContent = light ? '🌞' : '🌙';
+    if (cb)  cb.checked = light;
+    localStorage.setItem('synctact_theme', light ? 'light' : 'dark');
+  };
+  // Restore saved theme
+  apply(localStorage.getItem('synctact_theme') === 'light');
+  btn?.addEventListener('click', () => apply(!document.body.classList.contains('light-theme')));
+  cb?.addEventListener('change', () => apply(cb.checked));
+}
+window.applyTheme = (light) => {
+  document.body.classList.toggle('light-theme', light);
+  const btn = document.getElementById('themeToggleBtn');
+  const cb  = document.getElementById('lightThemeCheckbox');
+  if (btn) btn.textContent = light ? '🌞' : '🌙';
+  if (cb)  cb.checked = light;
+  localStorage.setItem('synctact_theme', light ? 'light' : 'dark');
+};
+
+// ── Presence selector ────────────────────────────────────────────────────────
+function initPresenceSelector() {
+  const sel = document.getElementById('presenceSelect');
+  if (!sel) return;
+  // Restore current presence from stored user data
+  const storedPres = myProfile?.presence || 'online';
+  sel.value = storedPres;
+  sel.addEventListener('change', async () => {
+    const pres = sel.value;
+    const res  = await authFetch('/users/me/presence', 'PATCH', { presence: pres });
+    if (!res.ok) { showToast('Could not update presence'); return; }
+    showToast({ online:'🟢 Online', away:'🟡 Away', dnd:'🔴 Do Not Disturb', offline:'⚫ Offline' }[pres] || '');
+  });
+}
+
+// ── Draft messages ────────────────────────────────────────────────────────────
+function saveDraft() {
+  if (!activeType || !activeId) return;
+  const key = `synctact_draft_${activeType}_${activeId}`;
+  const val = msgInput.value;
+  if (val) localStorage.setItem(key, val);
+  else localStorage.removeItem(key);
+}
+
+function restoreDraft() {
+  if (!activeType || !activeId) return;
+  const key = `synctact_draft_${activeType}_${activeId}`;
+  const val = localStorage.getItem(key) || '';
+  msgInput.value = val;
+  msgInput.style.height = 'auto';
+  if (val) {
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 140) + 'px';
+  }
+}
+
+// Patch openChannel to save/restore drafts and show new buttons
+const _origOpenChannel = window.openChannel;
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+function initKeyboardShortcuts() {
+  document.addEventListener('keydown', e => {
+    // Ctrl+K  — search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault(); openSearch();
+    }
+    // Escape — close modals/panels
+    if (e.key === 'Escape') {
+      ['settingsOverlay','webhooksOverlay','auditLogOverlay','analyticsOverlay',
+       'exportOverlay','membersOverlay','searchOverlay'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains('hidden')) el.classList.add('hidden');
+      });
+    }
+    // Ctrl+/ — show keyboard shortcuts hint
+    if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+      showToast('⌨️ Shortcuts: Ctrl+K = Search  |  Esc = Close panels');
+    }
+  });
+}
+
+// ── Unread jump button ────────────────────────────────────────────────────────
+let _unreadCount = 0;
+function initUnreadJump() {
+  const btn  = document.getElementById('unreadJumpBtn');
+  const wrap = document.getElementById('messagesWrap');
+  if (!btn || !wrap) return;
+  wrap.addEventListener('scroll', () => {
+    const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
+    if (atBottom) { _unreadCount = 0; btn.style.display = 'none'; }
+  });
+  btn.addEventListener('click', () => {
+    scrollToBottom();
+    _unreadCount = 0;
+    btn.style.display = 'none';
+  });
+}
+
+function notifyUnread() {
+  const wrap = document.getElementById('messagesWrap');
+  const btn  = document.getElementById('unreadJumpBtn');
+  if (!wrap || !btn) return;
+  const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
+  if (!atBottom) {
+    _unreadCount++;
+    btn.textContent = `↓ ${_unreadCount} new message${_unreadCount !== 1 ? 's' : ''}`;
+    btn.style.display = 'block';
+  }
+}
+
+// ── New feature handlers (header buttons + modals) ───────────────────────────
+function initNewFeatureHandlers() {
+  // Settings
+  const settingsBtn = document.getElementById('settingsBtn');
+  settingsBtn?.addEventListener('click', openSettingsModal);
+  document.getElementById('closeSettingsBtn')?.addEventListener('click', () =>
+    document.getElementById('settingsOverlay').classList.add('hidden'));
+  // Settings tabs
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.settings-pane').forEach(p => p.classList.add('hidden'));
+      tab.classList.add('active');
+      const pane = document.getElementById('settings-' + tab.dataset.tab);
+      if (pane) pane.classList.remove('hidden');
+      if (tab.dataset.tab === '2fa')      load2FAStatus();
+      if (tab.dataset.tab === 'sessions') loadSessionsList();
+      if (tab.dataset.tab === 'server')   loadServerSettings();
+    });
+  });
+  // 2FA buttons
+  document.getElementById('twoFASetupBtn')?.addEventListener('click', setup2FA);
+  document.getElementById('twoFAConfirmBtn')?.addEventListener('click', confirm2FA);
+  document.getElementById('twoFADisableBtn')?.addEventListener('click', disable2FA);
+  // Sessions
+  document.getElementById('saveServerSettingsBtn')?.addEventListener('click', saveServerSettings);
+
+  // Webhooks
+  document.getElementById('webhooksHeaderBtn')?.addEventListener('click', () => {
+    if (activeType !== 'channel') { showToast('Open a channel first'); return; }
+    openWebhooksModal();
+  });
+  document.getElementById('closeWebhooksBtn')?.addEventListener('click', () =>
+    document.getElementById('webhooksOverlay').classList.add('hidden'));
+  document.getElementById('createWebhookBtn')?.addEventListener('click', createWebhook);
+
+  // Audit log
+  document.getElementById('auditLogBtn')?.addEventListener('click', openAuditLog);
+  document.getElementById('closeAuditLogBtn')?.addEventListener('click', () =>
+    document.getElementById('auditLogOverlay').classList.add('hidden'));
+
+  // Analytics (attached to analytics modal channels + days filters)
+  document.getElementById('closeAnalyticsBtn')?.addEventListener('click', () =>
+    document.getElementById('analyticsOverlay').classList.add('hidden'));
+  document.getElementById('refreshAnalyticsBtn')?.addEventListener('click', refreshAnalytics);
+
+  // Export
+  document.getElementById('exportBtn')?.addEventListener('click', () => {
+    if (activeType !== 'channel') { showToast('Open a channel first'); return; }
+    const ch = channels.find(c => c.id === activeId);
+    document.getElementById('exportChannelName').textContent = ch ? '#' + ch.name : '#channel';
+    document.getElementById('exportOverlay').classList.remove('hidden');
+  });
+  document.getElementById('cancelExportBtn')?.addEventListener('click', () =>
+    document.getElementById('exportOverlay').classList.add('hidden'));
+  document.getElementById('confirmExportBtn')?.addEventListener('click', doExport);
+
+  // Members
+  document.getElementById('membersBtn')?.addEventListener('click', () => {
+    if (activeType !== 'channel') return;
+    openMembersModal();
+  });
+  document.getElementById('closeMembersBtn')?.addEventListener('click', () =>
+    document.getElementById('membersOverlay').classList.add('hidden'));
+
+  // Analytics sidebar entry (add to sidebar on load)
+  _addAnalyticsToSidebar();
+}
+
+function _addAnalyticsToSidebar() {
+  const bookmarksSection = document.querySelector('.sidebar-section:last-of-type');
+  if (!bookmarksSection) return;
+  // Add analytics section after bookmarks
+  const analyticsSection = document.createElement('div');
+  analyticsSection.className = 'sidebar-section';
+  analyticsSection.style.marginTop = '12px';
+  analyticsSection.innerHTML = `
+    <div class="section-header">
+      <span>Analytics</span>
+      <button class="btn-add" title="Open analytics">📊</button>
+    </div>`;
+  analyticsSection.querySelector('button').addEventListener('click', openAnalyticsModal);
+  bookmarksSection.after(analyticsSection);
+}
+
+// ── Settings modal ────────────────────────────────────────────────────────────
+function openSettingsModal() {
+  document.getElementById('settingsOverlay').classList.remove('hidden');
+  // Load 2FA status on open
+  load2FAStatus();
+}
+
+async function load2FAStatus() {
+  const res = await authFetch('/auth/me');
+  if (!res.ok) return;
+  const me = await res.json();
+  const statusEl  = document.getElementById('twoFAStatus');
+  const setupBtn  = document.getElementById('twoFASetupBtn');
+  const disableBtn = document.getElementById('twoFADisableBtn');
+  const qrArea    = document.getElementById('twoFAQRArea');
+  if (statusEl) statusEl.textContent = me.totp_enabled ? '✅ 2FA is enabled on your account.' : '⚠️ 2FA is not enabled.';
+  if (setupBtn)   setupBtn.classList.toggle('hidden', me.totp_enabled);
+  if (disableBtn) disableBtn.classList.toggle('hidden', !me.totp_enabled);
+  if (qrArea)     qrArea.classList.add('hidden');
+}
+
+async function setup2FA() {
+  const res = await authFetch('/auth/2fa/setup', 'POST', {});
+  if (!res.ok) { showToast('Could not start 2FA setup'); return; }
+  const data = await res.json();
+  const qrEl = document.getElementById('twoFAQR');
+  const qrArea = document.getElementById('twoFAQRArea');
+  if (qrEl)  qrEl.src = data.qr_data_url;
+  if (qrArea) qrArea.classList.remove('hidden');
+  document.getElementById('twoFASetupBtn').classList.add('hidden');
+}
+
+async function confirm2FA() {
+  const code = document.getElementById('twoFAConfirmCode')?.value?.trim();
+  if (!code) { showToast('Enter the 6-digit code'); return; }
+  const res = await authFetch('/auth/2fa/confirm', 'POST', { code });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Invalid code'); return; }
+  showToast('✅ 2FA enabled!');
+  load2FAStatus();
+}
+
+async function disable2FA() {
+  if (!confirm('Disable two-factor authentication?')) return;
+  const res = await authFetch('/auth/2fa', 'DELETE');
+  if (!res.ok) { showToast('Could not disable 2FA'); return; }
+  showToast('2FA disabled');
+  load2FAStatus();
+}
+
+async function loadSessionsList() {
+  const res = await authFetch('/auth/sessions');
+  const el = document.getElementById('sessionsList');
+  if (!el) return;
+  if (!res.ok) { el.innerHTML = '<div style="color:var(--text-muted);">Failed to load sessions</div>'; return; }
+  const sessions = await res.json();
+  if (!sessions.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;">No active sessions found.</div>'; return; }
+  el.innerHTML = sessions.map(s => `
+    <div class="session-item">
+      <div class="si-device">${esc(s.device || 'Unknown device')}</div>
+      <div class="si-ip">${esc(s.ip_addr || '')}</div>
+      <button class="session-revoke" onclick="revokeSession(${s.id}, this)">Revoke</button>
+    </div>`).join('');
+}
+
+window.revokeSession = async function(id, btn) {
+  const res = await authFetch(`/auth/sessions/${id}`, 'DELETE');
+  if (!res.ok) { showToast('Failed to revoke session'); return; }
+  btn.closest('.session-item')?.remove();
+  showToast('Session revoked');
+};
+
+async function loadServerSettings() {
+  const res = await authFetch('/settings');
+  if (!res.ok) return;
+  const data = await res.json();
+  const nameEl = document.getElementById('settingServerName');
+  const wlcEl  = document.getElementById('settingWelcomeMsg');
+  if (nameEl) nameEl.value = data.server_name || '';
+  if (wlcEl)  wlcEl.value  = data.welcome_message || '';
+}
+
+async function saveServerSettings() {
+  const body = {};
+  const name = document.getElementById('settingServerName')?.value?.trim();
+  const wlc  = document.getElementById('settingWelcomeMsg')?.value?.trim();
+  if (name) body.server_name = name;
+  if (wlc)  body.welcome_message = wlc;
+  const res = await authFetch('/settings', 'PATCH', body);
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Could not save settings'); return; }
+  showToast('✅ Settings saved!');
+}
+
+// ── Webhooks ──────────────────────────────────────────────────────────────────
+async function openWebhooksModal() {
+  document.getElementById('webhooksOverlay').classList.remove('hidden');
+  await loadWebhooks();
+}
+
+async function loadWebhooks() {
+  if (activeType !== 'channel') return;
+  const res = await authFetch(`/webhooks?channel_id=${activeId}`);
+  const el  = document.getElementById('webhooksList');
+  if (!el) return;
+  if (!res.ok) { el.innerHTML = '<div style="color:var(--text-muted);">Failed to load webhooks</div>'; return; }
+  const whs = await res.json();
+  if (!whs.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;">No webhooks yet.</div>'; return; }
+  const base = `${API}/webhook/`;
+  el.innerHTML = whs.map(w => `
+    <div class="wh-item" data-wh-id="${w.id}">
+      <span class="wh-name">${esc(w.name)}</span>
+      <span class="wh-token" title="${esc(w.token)}">${esc(w.token.slice(0,12))}…</span>
+      <button class="copy-wh-btn" onclick="navigator.clipboard.writeText('${base}${esc(w.token)}');showToast('Copied!')">Copy URL</button>
+      <button class="del-wh-btn" onclick="deleteWebhook(${w.id})">Delete</button>
+    </div>`).join('');
+}
+
+async function createWebhook() {
+  const name = document.getElementById('webhookNameInput')?.value?.trim();
+  if (!name) { showToast('Enter a webhook name'); return; }
+  const res = await authFetch('/webhooks', 'POST', { channel_id: activeId, name });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); showToast(e.detail || 'Failed'); return; }
+  document.getElementById('webhookNameInput').value = '';
+  showToast('Webhook created!');
+  await loadWebhooks();
+}
+
+window.deleteWebhook = async function(id) {
+  if (!confirm('Delete this webhook?')) return;
+  const res = await authFetch(`/webhooks/${id}`, 'DELETE');
+  if (!res.ok) { showToast('Failed to delete'); return; }
+  showToast('Webhook deleted');
+  await loadWebhooks();
+};
+
+// ── Audit Log ─────────────────────────────────────────────────────────────────
+async function openAuditLog() {
+  document.getElementById('auditLogOverlay').classList.remove('hidden');
+  const el = document.getElementById('auditLogList');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;">Loading…</div>';
+  const cid = activeType === 'channel' ? activeId : null;
+  const url = cid ? `/audit-log?limit=100&channel_id=${cid}` : '/audit-log?limit=100';
+  const res = await authFetch(url);
+  if (!res.ok) { el.innerHTML = '<div style="color:var(--text-muted);">Failed to load</div>'; return; }
+  const rows = await res.json();
+  if (!rows.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;text-align:center;padding:20px;">No audit events logged yet.</div>'; return; }
+  const icons = { kick:'🥢', mute:'🔇', ban:'🔨', delete:'🗑️', pin:'📌', unpin:'📌', channel_delete:'❌', channel_create:'✅' };
+  el.innerHTML = rows.map(r => `
+    <div class="audit-item">
+      <span class="audit-icon">${icons[r.action] || '📋'}</span>
+      <div class="audit-detail"><b>${esc(r.action)}</b>${r.detail ? ' — ' + esc(r.detail) : ''}</div>
+      <span class="audit-time">${formatTime(r.created_at)}</span>
+    </div>`).join('');
+}
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+async function openAnalyticsModal() {
+  const overlay = document.getElementById('analyticsOverlay');
+  overlay.classList.remove('hidden');
+  // Populate channel filter
+  const sel = document.getElementById('analyticsChannelFilter');
+  if (sel) {
+    sel.innerHTML = '<option value="">All channels</option>' +
+      channels.map(c => `<option value="${c.id}"${c.id === activeId && activeType === 'channel' ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+  }
+  await refreshAnalytics();
+}
+
+async function refreshAnalytics() {
+  const channelId = document.getElementById('analyticsChannelFilter')?.value || '';
+  const days      = document.getElementById('analyticsDaysFilter')?.value || '7';
+  const actUrl  = `/analytics/activity?days=${days}${channelId ? '&channel_id=' + channelId : ''}`;
+  const lbUrl   = `/analytics/leaderboard?limit=10${channelId ? '&channel_id=' + channelId : ''}`;
+  const [actRes, lbRes] = await Promise.all([authFetch(actUrl), authFetch(lbUrl)]);
+  if (actRes.ok) {
+    const data  = await actRes.json();
+    const maxCnt = Math.max(1, ...data.map(d => d.count));
+    const chartEl  = document.getElementById('activityChart');
+    const labelEl  = document.getElementById('activityLabels');
+    if (chartEl) {
+      chartEl.innerHTML = data.map(d => {
+        const pct = Math.round(d.count / maxCnt * 100);
+        return `<div class="chart-bar" style="height:${Math.max(4, pct)}%;" title="${d.date}: ${d.count}"></div>`;
+      }).join('');
+    }
+    if (labelEl) {
+      labelEl.innerHTML = data.map(d => `<span>${d.date.slice(5)}</span>`).join('');
+    }
+  }
+  if (lbRes.ok) {
+    const lb = await lbRes.json();
+    const maxCnt = Math.max(1, ...lb.map(e => e.count));
+    const el = document.getElementById('leaderboardList');
+    if (el) {
+      el.innerHTML = lb.map((e, i) => `
+        <div class="analytics-bar-row">
+          <span class="analytics-bar-name">${i + 1}. ${esc(e.name)}</span>
+          <div class="analytics-bar-track"><div class="analytics-bar-fill" style="width:${Math.round(e.count / maxCnt * 100)}%"></div></div>
+          <span class="analytics-bar-count">${e.count}</span>
+        </div>`).join('');
+    }
+  }
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+async function doExport() {
+  if (activeType !== 'channel') return;
+  const format = document.getElementById('exportFormat')?.value || 'json';
+  const res = await authFetch(`/chat/channels/${activeId}/export?format=${format}`);
+  if (!res.ok) { showToast('Export failed'); return; }
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href     = url;
+  link.download = `channel_${activeId}.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  document.getElementById('exportOverlay').classList.add('hidden');
+  showToast('📥 Export downloaded!');
+}
+
+// ── Channel Members ──────────────────────────────────────────────────────────
+async function openMembersModal() {
+  const overlay = document.getElementById('membersOverlay');
+  overlay.classList.remove('hidden');
+  const ch = channels.find(c => c.id === activeId);
+  document.getElementById('membersModalTitle').textContent = '👥 ' + (ch ? '#' + ch.name + ' Members' : 'Members');
+  const el = document.getElementById('membersList');
+  el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;padding:12px;">Loading…</div>';
+  const res = await authFetch(`/channels/${activeId}/members`);
+  if (!res.ok) { el.innerHTML = '<div style="color:var(--text-muted);">Failed to load members</div>'; return; }
+  const members = await res.json();
+  if (!members.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:.82rem;text-align:center;padding:20px;">No members yet.</div>'; return; }
+  const presenceIcon = { online:'🟢', away:'🟡', dnd:'🔴', offline:'⚫' };
+  el.innerHTML = members.map(m => {
+    const ini = (m.name || '?').charAt(0).toUpperCase();
+    const avHtml = m.avatar ? `<div class="msg-sender-avatar" style="width:32px;height:32px;font-size:.75rem;margin-right:0;"><img src="${API + m.avatar}" alt="" /></div>`
+                             : `<div class="msg-sender-avatar" style="width:32px;height:32px;font-size:.75rem;margin-right:0;">${ini}</div>`;
+    const roleBadge = m.role !== 'member' ? `<span class="role-badge ${m.role}">${m.role}</span>` : '';
+    return `<div class="user-pick-item">
+      ${avHtml}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:.85rem;font-weight:600;">${esc(m.name)}${roleBadge}</div>
+        <div style="font-size:.72rem;color:var(--text-muted);">${presenceIcon[m.presence] || '⚫'} ${m.presence}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Augment openChannel for new buttons + draft handling ─────────────────────
+// (openChannel already patched inline above to show new buttons + restore draft)
+
+// ── Markdown applied via direct edit to appendMessage above ─────────────────
 
 if (!user || !token) {
   document.getElementById('authGate').classList.remove('hidden');

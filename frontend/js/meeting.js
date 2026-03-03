@@ -1012,7 +1012,7 @@
     const imgData = _wbCtx ? _wbCtx.getImageData(0, 0, wbCanvas.width, wbCanvas.height) : null;
     wbCanvas.width  = rect.width;
     wbCanvas.height = rect.height - 52;
-    _wbCtx.fillStyle = '#1a1a1e';
+    _wbCtx.fillStyle = '#ffffff';
     _wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height);
     if (imgData) _wbCtx.putImageData(imgData, 0, 0);
   }
@@ -1033,7 +1033,7 @@
     _wbCtx.beginPath();
     _wbCtx.moveTo(x0, y0);
     _wbCtx.lineTo(x1, y1);
-    _wbCtx.strokeStyle = tool === 'eraser' ? '#1a1a1e' : (color || '#ffffff');
+    _wbCtx.strokeStyle = tool === 'eraser' ? '#ffffff' : (color || '#000000');
     _wbCtx.lineWidth   = tool === 'eraser' ? size * 4 : size;
     _wbCtx.lineCap     = 'round';
     _wbCtx.lineJoin    = 'round';
@@ -1043,7 +1043,7 @@
   function handleWbOp(msg) {
     if (!_wbCtx) return;
     if (msg.op === 'draw') wbDrawLine(msg.x0, msg.y0, msg.x1, msg.y1, msg.color, msg.size, msg.tool);
-    if (msg.op === 'clear') { _wbCtx.fillStyle = '#1a1a1e'; _wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height); }
+    if (msg.op === 'clear') { _wbCtx.fillStyle = '#ffffff'; _wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height); }
   }
 
   wbPenBtn.addEventListener('click', () => {
@@ -1060,7 +1060,7 @@
   });
   wbClearBtn.addEventListener('click', () => {
     if (!_wbCtx) return;
-    _wbCtx.fillStyle = '#1a1a1e';
+    _wbCtx.fillStyle = '#ffffff';
     _wbCtx.fillRect(0, 0, wbCanvas.width, wbCanvas.height);
     if (rtc) rtc.sendData('whiteboard', { op: 'clear' });
   });

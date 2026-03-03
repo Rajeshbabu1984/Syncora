@@ -808,7 +808,7 @@
 /* ================== WHITEBOARD ================== */
 .whiteboard-overlay {
   position: absolute; inset: 0;
-  background: #1a1a1e;
+  background: #ffffff;
   display: flex; flex-direction: column;
   z-index: 400;
 }
@@ -838,4 +838,4 @@
   background: none;
 }
 .wb-size-range { width: 80px; cursor: pointer; accent-color: var(--purple); }
-#whiteboardCanvas { flex: 1; display: block; cursor: crosshair; touch-action: none; }
+#whiteboardCanvas { flex: 1; display: block; cursor: crosshair; touch-action: none; background: #ffffff; }
