@@ -61,6 +61,7 @@ SECRET_KEY        = os.getenv("SECRET_KEY", "syncdrax-dev-secret-change-in-produ
 ALGORITHM        = "HS256"
 TOKEN_EXPIRE_DAYS = 30
 ADMIN_KEY         = os.getenv("ADMIN_KEY", "synctact-admin-2026")
+GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./synctact.db")
 UPLOADS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -109,6 +110,7 @@ class Channel(SQLModel, table=True):
     welcome_message:  Optional[str] = Field(default=None)
     readonly:         bool          = Field(default=False)   # only mods/admins can post
     archived:         bool          = Field(default=False)   # soft-archived
+    channel_type:     str           = Field(default='text')  # text | moodboard
     created_at:       datetime      = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -339,6 +341,19 @@ class CalendarEventRsvp(SQLModel, table=True):
     created_at: datetime    = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class Task(SQLModel, table=True):
+    id:           Optional[int]      = Field(default=None, primary_key=True)
+    channel_id:   Optional[int]      = Field(default=None, index=True)
+    creator_id:   int
+    creator_name: str
+    title:        str
+    description:  Optional[str]      = Field(default=None)
+    assignee_id:  Optional[int]      = Field(default=None)
+    assignee_name: Optional[str]     = Field(default=None)
+    status:       str                = Field(default='todo')  # todo | doing | done
+    created_at:   datetime           = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 def create_db_tables():
     SQLModel.metadata.create_all(engine)
 
@@ -384,6 +399,7 @@ def migrate_db():
                 ('welcome_message',  'ALTER TABLE channel ADD COLUMN welcome_message VARCHAR DEFAULT NULL'),
                 ('readonly',         'ALTER TABLE channel ADD COLUMN readonly BOOLEAN DEFAULT FALSE'),
                 ('archived',         'ALTER TABLE channel ADD COLUMN archived BOOLEAN DEFAULT FALSE'),
+                ('channel_type',      "ALTER TABLE channel ADD COLUMN channel_type VARCHAR DEFAULT 'text'"),
             ]:
                 if col not in existing:
                     conn.execute(sqlalchemy.text(ddl))
@@ -1600,8 +1616,9 @@ async def _chat_send(user_id: int, payload: dict):
 # Chat Pydantic schemas
 # -------------------------------------------------------------
 class ChannelCreate(BaseModel):
-    name:        str
-    description: Optional[str] = None
+    name:         str
+    description:  Optional[str] = None
+    channel_type: Optional[str] = 'text'  # text | moodboard
 
 
 class ScheduledCreate(BaseModel):
@@ -1623,7 +1640,8 @@ def list_channels(
     return [{"id": c.id, "name": c.name, "description": c.description,
              "created_by": c.created_by, "slowmode_seconds": c.slowmode_seconds or 0,
              "category_id": c.category_id,
-             "readonly": bool(c.readonly), "archived": bool(c.archived)} for c in channels]
+             "readonly": bool(c.readonly), "archived": bool(c.archived),
+             "channel_type": c.channel_type or 'text'} for c in channels]
 
 
 @app.post("/chat/channels", status_code=201)
@@ -1635,12 +1653,14 @@ def create_channel(
     name = req.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Channel name required")
-    ch = Channel(name=name, description=req.description, created_by=current_user.id)
+    ch = Channel(name=name, description=req.description, created_by=current_user.id,
+                 channel_type=req.channel_type or 'text')
     session.add(ch)
     session.commit()
     session.refresh(ch)
     return {"id": ch.id, "name": ch.name, "description": ch.description,
-            "created_by": ch.created_by, "slowmode_seconds": 0, "category_id": None}
+            "created_by": ch.created_by, "slowmode_seconds": 0, "category_id": None,
+            "channel_type": ch.channel_type or 'text'}
 
 
 @app.get("/chat/channels/{channel_id}/messages")
@@ -3112,3 +3132,221 @@ async def chat_ws(ws: WebSocket, user_id: int, token: str = Query(...)):
         chat_connections.pop(user_id, None)
         log.info("[chat] user %d disconnected", user_id)
         await _chat_broadcast({"type": "presence", "user_id": user_id, "online": False})
+
+
+# =============================================================
+# ── AI Channel Summarizer ─────────────────────────────────────
+# =============================================================
+@app.get("/chat/channels/{channel_id}/summarize")
+async def summarize_channel(
+    channel_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if not GEMINI_API_KEY:
+        raise HTTPException(400, "GEMINI_API_KEY not configured")
+    msgs = session.exec(
+        select(ChatMessage)
+        .where(ChatMessage.channel_id == channel_id, ChatMessage.bot_name == None)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(50)
+    ).all()
+    if not msgs:
+        return {"summary": "No messages to summarize yet."}
+    msgs = list(reversed(msgs))
+    transcript = "\n".join(f"{m.sender_name}: {m.content}" for m in msgs if m.content)
+    prompt = (
+        "You are a helpful assistant summarizing a chat channel.\n"
+        "Summarize the following conversation in 3-5 bullet points. Be concise and factual.\n\n"
+        + transcript
+    )
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+        )
+    if r.status_code != 200:
+        raise HTTPException(502, "AI service error")
+    data = r.json()
+    summary = data["candidates"][0]["content"]["parts"][0]["text"]
+    return {"summary": summary}
+
+
+# =============================================================
+# ── Channel Analytics ─────────────────────────────────────────
+# =============================================================
+@app.get("/chat/channels/{channel_id}/analytics")
+def channel_analytics(
+    channel_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    import collections
+    msgs = session.exec(
+        select(ChatMessage)
+        .where(ChatMessage.channel_id == channel_id, ChatMessage.bot_name == None)
+        .order_by(ChatMessage.created_at)
+    ).all()
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    # per-day counts last 7 days
+    day_counts: dict = collections.defaultdict(int)
+    hour_counts: dict = collections.defaultdict(int)
+    user_counts: dict = collections.defaultdict(int)
+    user_names: dict = {}
+    week_msgs = []
+    for m in msgs:
+        ts = m.created_at if m.created_at.tzinfo else m.created_at.replace(tzinfo=timezone.utc)
+        if ts >= week_ago:
+            week_msgs.append(m)
+            day_counts[ts.strftime("%a")] += 1
+            hour_counts[ts.hour] += 1
+        user_counts[m.sender_id] += 1
+        user_names[m.sender_id] = m.sender_name
+    top_users = sorted(user_counts.items(), key=lambda x: -x[1])[:5]
+    days_order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    return {
+        "total_messages": len(msgs),
+        "messages_this_week": len(week_msgs),
+        "messages_per_day": {d: day_counts.get(d, 0) for d in days_order},
+        "messages_per_hour": {str(h): hour_counts.get(h, 0) for h in range(24)},
+        "top_users": [{"id": uid, "name": user_names[uid], "count": cnt} for uid, cnt in top_users],
+    }
+
+
+# =============================================================
+# ── Task Board ───────────────────────────────────────────────
+# =============================================================
+class TaskCreate(BaseModel):
+    channel_id:    Optional[int]  = None
+    title:         str
+    description:   Optional[str]  = None
+    assignee_id:   Optional[int]  = None
+    assignee_name: Optional[str]  = None
+
+class TaskUpdate(BaseModel):
+    title:         Optional[str]  = None
+    description:   Optional[str]  = None
+    assignee_id:   Optional[int]  = None
+    assignee_name: Optional[str]  = None
+    status:        Optional[str]  = None  # todo | doing | done
+
+def _board_task_dict(t: Task) -> dict:
+    return {
+        "id": t.id, "channel_id": t.channel_id,
+        "creator_id": t.creator_id, "creator_name": t.creator_name,
+        "title": t.title, "description": t.description,
+        "assignee_id": t.assignee_id, "assignee_name": t.assignee_name,
+        "status": t.status,
+        "created_at": t.created_at.isoformat(),
+    }
+
+@app.get("/board-tasks")
+def list_board_tasks(
+    channel_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    stmt = select(Task)
+    if channel_id is not None:
+        stmt = stmt.where(Task.channel_id == channel_id)
+    tasks = session.exec(stmt.order_by(Task.created_at)).all()
+    return [_board_task_dict(t) for t in tasks]
+
+@app.post("/board-tasks", status_code=201)
+async def create_board_task(
+    body: TaskCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    t = Task(
+        channel_id=body.channel_id, creator_id=current_user.id,
+        creator_name=current_user.name, title=body.title.strip(),
+        description=body.description, assignee_id=body.assignee_id,
+        assignee_name=body.assignee_name,
+    )
+    session.add(t); session.commit(); session.refresh(t)
+    td = _board_task_dict(t)
+    await _chat_broadcast({"type": "task_created", "task": td})
+    return td
+
+@app.patch("/board-tasks/{task_id}")
+async def update_board_task(
+    task_id: int,
+    body: TaskUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    t = session.get(Task, task_id)
+    if not t:
+        raise HTTPException(404, "Task not found")
+    if body.title         is not None: t.title         = body.title.strip()
+    if body.description   is not None: t.description   = body.description
+    if body.assignee_id   is not None: t.assignee_id   = body.assignee_id
+    if body.assignee_name is not None: t.assignee_name = body.assignee_name
+    if body.status        is not None: t.status        = body.status
+    session.add(t); session.commit(); session.refresh(t)
+    td = _board_task_dict(t)
+    await _chat_broadcast({"type": "task_updated", "task": td})
+    return td
+
+@app.delete("/board-tasks/{task_id}")
+async def delete_board_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    t = session.get(Task, task_id)
+    if not t:
+        raise HTTPException(404)
+    session.delete(t); session.commit()
+    await _chat_broadcast({"type": "task_deleted", "task_id": task_id})
+    return {"ok": True}
+
+
+# =============================================================
+# ── Meeting Notes Auto-Summary ────────────────────────────────
+# =============================================================
+@app.post("/chat/channels/{channel_id}/meeting-summary")
+async def meeting_summary(
+    channel_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Summarize messages from the last 2 hours as meeting notes."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(400, "GEMINI_API_KEY not configured")
+    since = datetime.now(timezone.utc) - timedelta(hours=2)
+    msgs = session.exec(
+        select(ChatMessage)
+        .where(ChatMessage.channel_id == channel_id,
+               ChatMessage.bot_name == None,
+               ChatMessage.created_at >= since)
+        .order_by(ChatMessage.created_at)
+    ).all()
+    if not msgs:
+        return {"notes": "No messages in the last 2 hours to summarize."}
+    transcript = "\n".join(f"{m.sender_name}: {m.content}" for m in msgs if m.content)
+    prompt = (
+        "You are a professional meeting note taker.\n"
+        "Convert this chat transcript into structured meeting notes with:\n"
+        "- Key discussion points\n- Decisions made\n- Action items (who does what)\n\n"
+        + transcript
+    )
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+        )
+    if r.status_code != 200:
+        raise HTTPException(502, "AI service error")
+    data = r.json()
+    notes = data["candidates"][0]["content"]["parts"][0]["text"]
+    # Post as a bot message in the channel
+    cm = ChatMessage(
+        channel_id=channel_id, sender_id=0, sender_name="Volt",
+        content=f"📋 **Meeting Notes**\n\n{notes}", bot_name="Volt",
+    )
+    session.add(cm); session.commit(); session.refresh(cm)
+    await _chat_broadcast({"type": "channel_message", "message": _msg_dict(cm)})
+    return {"notes": notes}

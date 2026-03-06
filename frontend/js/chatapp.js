@@ -565,6 +565,13 @@ function handleServerMsg(msg) {
       messagesWrap?.appendChild(div);
       break;
     }
+
+    case 'task_created':
+    case 'task_updated':
+    case 'task_deleted': {
+      handleTaskWsEvent(msg);
+      break;
+    }
   }
 }
 
@@ -608,7 +615,8 @@ async function openChannel(ch) {
     _updateVoltTargetBtn();
   }
   // Show new buttons for channel context
-  ['membersBtn', 'webhooksHeaderBtn', 'exportBtn', 'fileBrowserBtn'].forEach(id => {
+  ['membersBtn', 'webhooksHeaderBtn', 'exportBtn', 'fileBrowserBtn',
+   'summarizeBtn', 'analyticsChannelBtn', 'taskBoardBtn', 'meetingSummaryBtn'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = '';
   });
@@ -642,6 +650,8 @@ async function openChannel(ch) {
   document.getElementById('callBar')?.classList.remove('visible');
   // Restore draft
   restoreDraft();
+  // Mood board mode
+  applyMoodBoardMode(ch.channel_type === 'moodboard');
   await Promise.all([loadMessages('channel', ch.id), loadPinnedMessages(ch.id), loadChannelPolls(ch.id)]);
   _updateSlowmodeBar(ch.slowmode_seconds || 0);
   // 1-second auto-refresh for pinned badge (instant fallback if WS misses an event)
@@ -701,7 +711,8 @@ async function openDm(uid, name) {
   if (voltTargetBtn) voltTargetBtn.style.display = 'none';
   // Hide all channel-context header buttons + dividers when in DM
   ['inviteBtn','membersBtn','galleryBtn','muteChannelBtn','webhooksHeaderBtn',
-   'exportBtn','startCallBtn','fileBrowserBtn','headerDivider','overflowDiv1'].forEach(id => {
+   'exportBtn','startCallBtn','fileBrowserBtn','headerDivider','overflowDiv1',
+   'summarizeBtn','analyticsChannelBtn','taskBoardBtn','meetingSummaryBtn'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
   });
   const badge = document.getElementById('pinnedBadge');
@@ -749,6 +760,13 @@ async function loadMessages(type, id) {
 
 function appendMessage(m, initial) {
   const wrap = messagesWrap;
+  // Mood board: render as image card instead of normal message
+  if (wrap.classList.contains('moodboard-grid')) {
+    const card = renderMoodBoardMessage(m);
+    if (card) { wrap.appendChild(card); return; }
+    // Non-image messages in moodboard are skipped silently
+    return;
+  }
   // Group by sender + within 5 min (also keep bot names separate)
   const last = wrap.lastElementChild;
   const lastSenderId = last?.dataset?.senderId;
@@ -909,6 +927,8 @@ const SLASH_COMMANDS = [
   { cmd: '/roll',    icon: '🎲', desc: '/roll [max] — roll a random number' },
   { cmd: '/coin',    icon: '🪙', desc: 'Flip a coin' },
   { cmd: '/remind',  icon: '⏰', desc: '/remind 10m Your reminder text' },
+  { cmd: '/task',    icon: '✅', desc: '/task <title> — add a task to the board' },
+  { cmd: '/focus',   icon: '🌙', desc: '/focus [minutes] — enable focus mode' },
   { cmd: '/giphy',   icon: '🎞️', desc: '/giphy search term — post a GIF' },
   { cmd: '/weather', icon: '🌤️', desc: '/weather city — current weather' },
   { cmd: '/8ball',   icon: '🎱', desc: '/8ball question — magic 8-ball answer' },
@@ -986,6 +1006,21 @@ async function executeSlashCommand(text) {
   if (cmd === '/coin') {
     const result = Math.random() < 0.5 ? '🪙 Heads!' : '🪙 Tails!';
     await _postVolt(result);
+    return;
+  }
+
+  if (cmd === '/task') {
+    if (activeType !== 'channel') { showToast('Open a channel to add a task'); return; }
+    const title = parts.slice(1).join(' ').trim();
+    if (!title) { showToast('Usage: /task <title>'); return; }
+    const res = await authFetch('/board-tasks', { method: 'POST', body: JSON.stringify({ channel_id: activeId, title }) });
+    if (res.ok) { showToast('✅ Task added to board'); } else { showToast('Failed to add task', 'error'); }
+    return;
+  }
+
+  if (cmd === '/focus') {
+    const mins = parseInt(parts[1]) || 25;
+    startFocusMode(mins);
     return;
   }
 
@@ -2839,6 +2874,45 @@ function initNewFeatureHandlers() {
     document.getElementById('exportOverlay').classList.add('hidden'));
   document.getElementById('confirmExportBtn')?.addEventListener('click', doExport);
 
+  // ── New feature buttons ────────────────────────────────────
+  // Focus mode
+  document.getElementById('focusModeBtn')?.addEventListener('click', () => {
+    document.getElementById('headerOverflowMenu').classList.add('hidden');
+    if (_focusActive) exitFocusMode();
+    else startFocusMode(25);
+  });
+  document.getElementById('exitFocusBtn')?.addEventListener('click', exitFocusMode);
+
+  // AI Summarize
+  document.getElementById('summarizeBtn')?.addEventListener('click', () => {
+    document.getElementById('headerOverflowMenu').classList.add('hidden');
+    openSummarizeModal();
+  });
+  document.getElementById('closeSummarizeBtn')?.addEventListener('click', () =>
+    document.getElementById('summarizeOverlay').classList.add('hidden'));
+
+  // Channel analytics (per-channel deep dive)
+  document.getElementById('analyticsChannelBtn')?.addEventListener('click', () => {
+    document.getElementById('headerOverflowMenu').classList.add('hidden');
+    openAnalyticsModal();
+  });
+
+  // Task board
+  document.getElementById('taskBoardBtn')?.addEventListener('click', () => {
+    document.getElementById('headerOverflowMenu').classList.add('hidden');
+    openTaskBoard();
+  });
+  document.getElementById('closeTaskBoardBtn')?.addEventListener('click', () =>
+    document.getElementById('taskBoardOverlay').classList.add('hidden'));
+
+  // Meeting notes
+  document.getElementById('meetingSummaryBtn')?.addEventListener('click', () => {
+    document.getElementById('headerOverflowMenu').classList.add('hidden');
+    openMeetingNotes();
+  });
+  document.getElementById('closeMeetingNotesBtn')?.addEventListener('click', () =>
+    document.getElementById('meetingNotesOverlay').classList.add('hidden'));
+
   // Members
   document.getElementById('membersBtn')?.addEventListener('click', () => {
     if (activeType !== 'channel') return;
@@ -3120,6 +3194,215 @@ async function openMembersModal() {
 
 // ── Augment openChannel for new buttons + draft handling ─────────────────────
 // (openChannel already patched inline above to show new buttons + restore draft)
+
+// ═══════════════════════════════════════════════════════════
+// FEATURE: Focus Mode
+// ═══════════════════════════════════════════════════════════
+let _focusActive = false;
+let _focusTimer  = null;
+let _focusSecs   = 0;
+
+function startFocusMode(minutes = 25) {
+  if (_focusActive) { exitFocusMode(); return; }
+  _focusActive = true;
+  _focusSecs = minutes * 60;
+  document.getElementById('focusbanner').style.display = 'block';
+  _tickFocusTimer();
+  _focusTimer = setInterval(_tickFocusTimer, 1000);
+  authFetch('/users/me/presence', { method: 'PATCH', body: JSON.stringify({ presence: 'dnd' }) });
+  showToast('🌙 Focus mode on — presence set to Do Not Disturb');
+}
+function _tickFocusTimer() {
+  if (_focusSecs <= 0) { exitFocusMode(); return; }
+  _focusSecs--;
+  const m = String(Math.floor(_focusSecs / 60)).padStart(2,'0');
+  const s = String(_focusSecs % 60).padStart(2,'0');
+  const el = document.getElementById('focusbannerTimer');
+  if (el) el.textContent = `(${m}:${s} left)`;
+}
+function exitFocusMode() {
+  _focusActive = false;
+  clearInterval(_focusTimer); _focusTimer = null;
+  document.getElementById('focusbanner').style.display = 'none';
+  authFetch('/users/me/presence', { method: 'PATCH', body: JSON.stringify({ presence: 'online' }) });
+  showToast('Focus mode ended');
+}
+
+// ═══════════════════════════════════════════════════════════
+// FEATURE: AI Channel Summarizer
+// ═══════════════════════════════════════════════════════════
+async function openSummarizeModal() {
+  if (activeType !== 'channel') { showToast('Open a channel first'); return; }
+  const overlay = document.getElementById('summarizeOverlay');
+  const result  = document.getElementById('summarizeResult');
+  overlay.classList.remove('hidden');
+  result.textContent = 'Summarizing with Gemini AI…';
+  try {
+    const res = await authFetch(`/chat/channels/${activeId}/summarize`);
+    const data = await res.json();
+    if (!res.ok) { result.textContent = data.detail || 'Error from AI service.'; return; }
+    result.textContent = data.summary;
+  } catch(e) {
+    result.textContent = 'Failed to reach AI service.';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// FEATURE: Task / Kanban Board
+// ═══════════════════════════════════════════════════════════
+let _boardTasks = [];
+let _dragTaskId = null;
+
+async function openTaskBoard() {
+  if (activeType !== 'channel') { showToast('Open a channel first'); return; }
+  document.getElementById('taskBoardOverlay').classList.remove('hidden');
+  await reloadTaskBoard();
+}
+
+async function reloadTaskBoard() {
+  const res = await authFetch(`/board-tasks?channel_id=${activeId}`);
+  if (!res.ok) { showToast('Failed to load tasks'); return; }
+  _boardTasks = await res.json();
+  renderKanban();
+}
+
+function renderKanban() {
+  const cols = ['todo', 'doing', 'done'];
+  const labels = { todo: 'To Do', doing: 'In Progress', done: 'Done' };
+  const wrap = document.getElementById('kanbanWrap');
+  wrap.innerHTML = '';
+  cols.forEach(status => {
+    const tasks = _boardTasks.filter(t => t.status === status);
+    const col = document.createElement('div');
+    col.className = 'kanban-col';
+    col.dataset.status = status;
+    col.innerHTML = `
+      <div class="kanban-col-header">
+        <span>${labels[status]} (${tasks.length})</span>
+        <button class="kanban-add-btn" title="Add task" data-status="${status}">＋</button>
+      </div>
+      ${tasks.map(t => `
+        <div class="kanban-card" draggable="true" data-id="${t.id}">
+          <div class="kc-title">${esc(t.title)}</div>
+          <div class="kc-meta">
+            <span>👤 ${esc(t.assignee_name || t.creator_name)}</span>
+          </div>
+          <button class="kc-del" data-id="${t.id}" title="Delete">✕</button>
+        </div>`).join('')}
+      <div class="kanban-new-row" id="kanban-new-${status}" style="display:none;">
+        <input class="kanban-new-input" placeholder="Task title…" />
+        <button class="kanban-new-save" data-status="${status}">Add</button>
+      </div>`;
+    // drag events
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('drag-over'); });
+    col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+    col.addEventListener('drop', async e => {
+      e.preventDefault(); col.classList.remove('drag-over');
+      if (_dragTaskId == null) return;
+      await authFetch(`/board-tasks/${_dragTaskId}`, {
+        method: 'PATCH', body: JSON.stringify({ status }) });
+      await reloadTaskBoard();
+    });
+    wrap.appendChild(col);
+  });
+  // Wire up cards after render
+  wrap.querySelectorAll('.kanban-card').forEach(card => {
+    card.addEventListener('dragstart', () => { _dragTaskId = Number(card.dataset.id); card.classList.add('dragging'); });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  });
+  wrap.querySelectorAll('.kc-del').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.id);
+      await authFetch(`/board-tasks/${id}`, { method: 'DELETE' });
+      await reloadTaskBoard();
+    });
+  });
+  wrap.querySelectorAll('.kanban-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = document.getElementById(`kanban-new-${btn.dataset.status}`);
+      if (row) { row.style.display = 'flex'; row.querySelector('input').focus(); }
+    });
+  });
+  wrap.querySelectorAll('.kanban-new-save').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const status = btn.dataset.status;
+      const row  = document.getElementById(`kanban-new-${status}`);
+      const inp  = row?.querySelector('input');
+      const title = inp?.value.trim();
+      if (!title) return;
+      await authFetch('/board-tasks', {
+        method: 'POST',
+        body: JSON.stringify({ channel_id: activeId, title, status })
+      });
+      await reloadTaskBoard();
+    });
+  });
+}
+
+// Handle real-time task events from WebSocket
+function handleTaskWsEvent(msg) {
+  if (msg.type === 'task_created' || msg.type === 'task_updated') {
+    const idx = _boardTasks.findIndex(t => t.id === msg.task.id);
+    if (idx >= 0) _boardTasks[idx] = msg.task; else _boardTasks.push(msg.task);
+    if (!document.getElementById('taskBoardOverlay').classList.contains('hidden')) renderKanban();
+  } else if (msg.type === 'task_deleted') {
+    _boardTasks = _boardTasks.filter(t => t.id !== msg.task_id);
+    if (!document.getElementById('taskBoardOverlay').classList.contains('hidden')) renderKanban();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// FEATURE: Mood Board rendering
+// ═══════════════════════════════════════════════════════════
+function applyMoodBoardMode(isMoodboard) {
+  const wrap = document.getElementById('messagesWrap');
+  const inputArea = document.querySelector('.input-area');
+  if (!wrap) return;
+  if (isMoodboard) {
+    wrap.classList.add('moodboard-grid');
+    // Show hint in input placeholder
+    if (msgInput) msgInput.placeholder = 'Paste an image URL to pin to mood board…';
+  } else {
+    wrap.classList.remove('moodboard-grid');
+    if (msgInput) msgInput.placeholder = 'Message…';
+  }
+}
+
+function renderMoodBoardMessage(msg) {
+  // Returns an img card if content looks like an image URL
+  const imgExtRe = /\.(jpg|jpeg|png|gif|webp|avif|svg)(\?.*)?$/i;
+  const urlRe = /^https?:\/\//i;
+  const src = (msg.file_url && imgExtRe.test(msg.file_url))
+    ? msg.file_url
+    : (urlRe.test(msg.content) && (imgExtRe.test(msg.content) || msg.content.includes('images.')))
+      ? msg.content : null;
+  if (!src) return null;
+  const card = document.createElement('div');
+  card.className = 'mood-img-card';
+  card.innerHTML = `<img src="${src}" alt="" loading="lazy" />`;
+  card.addEventListener('click', () => window.open(src, '_blank'));
+  return card;
+}
+
+// ═══════════════════════════════════════════════════════════
+// FEATURE: Meeting Notes Auto-Summary
+// ═══════════════════════════════════════════════════════════
+async function openMeetingNotes() {
+  if (activeType !== 'channel') { showToast('Open a channel first'); return; }
+  const overlay = document.getElementById('meetingNotesOverlay');
+  const result  = document.getElementById('meetingNotesResult');
+  overlay.classList.remove('hidden');
+  result.textContent = 'Generating meeting notes from the last 2 hours…';
+  try {
+    const res = await authFetch(`/chat/channels/${activeId}/meeting-summary`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { result.textContent = data.detail || 'Error from AI service.'; return; }
+    result.textContent = data.notes;
+  } catch(e) {
+    result.textContent = 'Failed to reach AI service.';
+  }
+}
 
 // ── Mobile sidebar ────────────────────────────────────────────────────────────
 function initMobileSidebar() {

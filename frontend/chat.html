@@ -608,6 +608,66 @@
 
     /* ── Wide modal ── */
     .modal-card.wide { width:600px; max-height:82vh; overflow-y:auto; }
+
+    /* ── Focus mode ── */
+    #focusbanner { display:none; position:fixed; top:0; left:0; right:0; z-index:2000;
+                   background:var(--purple); color:#fff; text-align:center;
+                   padding:7px 20px; font-size:.82rem; font-weight:700;
+                   box-shadow:0 2px 10px rgba(0,0,0,.35); }
+    #focusbannerTimer { font-variant-numeric:tabular-nums; margin-left:10px; }
+    #exitFocusBtn { margin-left:14px; background:rgba(255,255,255,.22); border:none; color:#fff;
+                    border-radius:5px; padding:2px 10px; cursor:pointer; font-size:.78rem; }
+
+    /* ── AI Summarize modal ── */
+    #summarizeOverlay .modal-card { width:520px; }
+    #summarizeResult { background:var(--bg-input); border-radius:10px; padding:14px 16px;
+                       font-size:.82rem; line-height:1.6; white-space:pre-wrap;
+                       min-height:80px; max-height:300px; overflow-y:auto; margin:12px 0; }
+
+    /* ── Task / Kanban board ── */
+    #taskBoardOverlay .modal-card { width:780px; max-height:88vh; overflow-y:auto; }
+    .kanban-wrap { display:flex; gap:12px; align-items:flex-start; padding:4px 0; }
+    .kanban-col  { flex:1; background:var(--bg-input); border-radius:10px; padding:10px;
+                   min-width:200px; }
+    .kanban-col-header { font-size:.72rem; font-weight:800; letter-spacing:.08em;
+                         color:var(--text-muted); text-transform:uppercase; margin-bottom:8px;
+                         display:flex; align-items:center; justify-content:space-between; }
+    .kanban-add-btn  { background:none; border:none; color:var(--purple-l); cursor:pointer;
+                       font-size:.85rem; padding:0 2px; }
+    .kanban-card { background:var(--bg-2); border-radius:8px; padding:9px 11px;
+                   margin-bottom:7px; cursor:grab; font-size:.82rem; position:relative;
+                   border:1px solid var(--border); transition:box-shadow .15s; }
+    .kanban-card:hover { box-shadow:0 2px 10px rgba(124,58,237,.22); }
+    .kanban-card.dragging { opacity:.4; }
+    .kanban-card .kc-title { font-weight:600; margin-bottom:3px; }
+    .kanban-card .kc-meta  { font-size:.7rem; color:var(--text-muted); display:flex; gap:8px; align-items:center; }
+    .kanban-card .kc-del  { position:absolute; top:8px; right:8px; background:none; border:none;
+                             color:var(--text-muted); cursor:pointer; font-size:.75rem;
+                             opacity:0; transition:opacity .15s; }
+    .kanban-card:hover .kc-del { opacity:1; }
+    .kanban-col.drag-over { outline:2px dashed var(--purple-l); }
+    .kanban-new-row { display:flex; gap:8px; margin-top:6px; }
+    .kanban-new-input { flex:1; background:var(--bg-3); border:1px solid var(--border);
+                        border-radius:7px; padding:5px 9px; color:var(--text); font-size:.8rem; }
+    .kanban-new-input:focus { outline:none; border-color:var(--purple); }
+    .kanban-new-save { background:var(--purple); color:#fff; border:none; border-radius:7px;
+                       padding:5px 12px; cursor:pointer; font-size:.8rem; }
+
+    /* ── Mood board grid ── */
+    #messagesWrap.moodboard-grid { display:grid;
+      grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+      gap:10px; padding:16px; align-content:start; }
+    .mood-img-card { border-radius:10px; overflow:hidden; background:var(--bg-input);
+                     aspect-ratio:1; cursor:pointer; transition:transform .2s;
+                     position:relative; }
+    .mood-img-card:hover { transform:scale(1.03); }
+    .mood-img-card img { width:100%; height:100%; object-fit:cover; }
+
+    /* ── Meeting notes modal ── */
+    #meetingNotesOverlay .modal-card { width:520px; }
+    #meetingNotesResult { background:var(--bg-input); border-radius:10px; padding:14px 16px;
+                          font-size:.82rem; line-height:1.6; white-space:pre-wrap;
+                          min-height:80px; max-height:320px; overflow-y:auto; margin:12px 0; }
     .sessions-list { max-height:260px; overflow-y:auto; }
     .session-item { display:flex; align-items:center; gap:10px; padding:10px 0;
                     border-bottom:1px solid var(--border); font-size:.82rem; }
@@ -861,8 +921,13 @@
             <button class="overflow-item" id="fileBrowserBtn" style="display:none"><i class="fa-solid fa-folder-open"></i> Files</button>
             <button class="overflow-item" id="webhooksHeaderBtn" style="display:none"><i class="fa-solid fa-plug"></i> Webhooks</button>
             <button class="overflow-item" id="exportBtn" style="display:none"><i class="fa-solid fa-file-arrow-down"></i> Export chat</button>
+            <button class="overflow-item" id="summarizeBtn" style="display:none"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Summarize</button>
+            <button class="overflow-item" id="analyticsChannelBtn" style="display:none"><i class="fa-solid fa-chart-line"></i> Channel Analytics</button>
+            <button class="overflow-item" id="taskBoardBtn" style="display:none"><i class="fa-solid fa-table-columns"></i> Task Board</button>
+            <button class="overflow-item" id="meetingSummaryBtn" style="display:none"><i class="fa-solid fa-note-sticky"></i> Meeting Notes</button>
             <div class="overflow-divider" id="overflowDiv1" style="display:none"></div>
             <!-- Global actions -->
+            <button class="overflow-item" id="focusModeBtn"><i class="fa-solid fa-moon"></i> Focus mode</button>
             <button class="overflow-item" id="createPollBtn"><i class="fa-solid fa-chart-bar"></i> Create poll</button>
             <button class="overflow-item" id="templatesBtn"><i class="fa-solid fa-rectangle-list"></i> Templates</button>
             <button class="overflow-item" id="eventsBtn"><i class="fa-regular fa-calendar"></i> Events</button>
@@ -1491,6 +1556,48 @@
 <audio id="sndMention"  src="https://assets.mixkit.co/active_storage/sfx/1862/1862-preview.mp3"  preload="none"></audio>
 <audio id="sndCallIn"   src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"  preload="none"></audio>
 <audio id="sndNotif"    src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"  preload="none"></audio>
+
+<!-- Focus mode banner (fixed top) -->
+<div id="focusbanner">
+  🌙 Focus mode active — notifications muted
+  <span id="focusbannerTimer"></span>
+  <button id="exitFocusBtn">Exit focus</button>
+</div>
+
+<!-- AI Summarize overlay -->
+<div class="overlay hidden" id="summarizeOverlay">
+  <div class="modal-card">
+    <h3><i class="fa-solid fa-wand-magic-sparkles" style="color:var(--purple-l);margin-right:8px;"></i>AI Channel Summary</h3>
+    <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">Summarizing the last 50 messages using Gemini AI.</p>
+    <div id="summarizeResult">Loading…</div>
+    <div class="modal-row" style="margin-top:14px;">
+      <button class="modal-btn secondary" id="closeSummarizeBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Task board overlay -->
+<div class="overlay hidden" id="taskBoardOverlay">
+  <div class="modal-card" id="taskBoardCard">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <h3 style="margin:0;"><i class="fa-solid fa-table-columns" style="color:var(--purple-l);margin-right:8px;"></i>Task Board</h3>
+      <button class="modal-btn secondary" id="closeTaskBoardBtn" style="padding:5px 14px;font-size:.8rem;">Close</button>
+    </div>
+    <div class="kanban-wrap" id="kanbanWrap"></div>
+  </div>
+</div>
+
+<!-- Meeting notes overlay -->
+<div class="overlay hidden" id="meetingNotesOverlay">
+  <div class="modal-card">
+    <h3><i class="fa-solid fa-note-sticky" style="color:var(--purple-l);margin-right:8px;"></i>Meeting Notes</h3>
+    <p style="font-size:.8rem;color:var(--text-muted);margin-bottom:4px;">Auto-generated notes from the last 2 hours of chat.</p>
+    <div id="meetingNotesResult">Loading…</div>
+    <div class="modal-row" style="margin-top:14px;">
+      <button class="modal-btn secondary" id="closeMeetingNotesBtn">Close</button>
+    </div>
+  </div>
+</div>
 
 <script>
   if ('serviceWorker' in navigator) {
