@@ -674,7 +674,7 @@ async function openChannel(ch) {
   _pinnedPollTimer = setInterval(() => {
     if (activeType === 'channel' && activeId === ch.id) loadPinnedMessages(ch.id);
     else clearInterval(_pinnedPollTimer);
-  }, 1000);
+  }, 30000);
 }
 
 // ── DMs ───────────────────────────────────────────────────────────────────────
@@ -2285,7 +2285,10 @@ async function togglePin(msgId) {
 
 async function loadPinnedMessages(channelId) {
   const res = await authFetch(`/chat/channels/${channelId}/pinned`);
-  if (!res.ok) return;
+  if (!res.ok) {
+    if (res.status === 401) { clearInterval(_pinnedPollTimer); localStorage.removeItem('token'); location.href = '/index.html'; }
+    return;
+  }
   const msgs = await res.json();
   const badge = document.getElementById('pinnedBadge');
   const bar   = document.getElementById('pinnedBar');
