@@ -61,7 +61,7 @@ SECRET_KEY        = os.getenv("SECRET_KEY", "syncdrax-dev-secret-change-in-produ
 ALGORITHM        = "HS256"
 TOKEN_EXPIRE_DAYS = 30
 ADMIN_KEY         = os.getenv("ADMIN_KEY", "synctact-admin-2026")
-GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY    = os.getenv("Syntact_Key") or os.getenv("GEMINI_API_KEY", "")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./synctact.db")
 UPLOADS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
