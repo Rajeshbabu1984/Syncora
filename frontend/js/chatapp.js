@@ -2648,6 +2648,8 @@ function updatePollCard(card, p) {
 }
 
 async function loadChannelPolls(channelId) {
+  // Remove poll cards from the previous channel before loading new ones
+  document.querySelectorAll('[data-poll-id]').forEach(el => el.remove());
   const res = await authFetch(`/chat/channels/${channelId}/polls`);
   if (!res.ok) return;
   // Guard against stale responses from a previous channel
